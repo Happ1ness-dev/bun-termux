@@ -1,0 +1,35 @@
+# Build artifacts
+bun-termux
+bun-shim.so
+
+# Test binaries
+tests/test-proc-self-exe
+tests/test-env-compiled
+tests/*.o
+tests/native-modules/**/*.o
+tests/native-modules/addon/simple.node
+tests/native-modules/lib/simple.so
+
+# Test environment directory
+tests/tmp_bun_install/
+
+# Object files (if intermediate files are generated)
+*.o
+*.obj
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Core dumps
+core
+core.*
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
