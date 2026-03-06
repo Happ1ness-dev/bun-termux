@@ -173,7 +173,7 @@ static int parse_shebang(const char *path, char *interp, size_t interp_size,
 }
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
-    static char interp_buf[256], arg_buf[256], translated_buf[256];
+    char interp_buf[256], arg_buf[256], translated_buf[256];
     
     if (parse_shebang(pathname, interp_buf, sizeof(interp_buf),
                       arg_buf, sizeof(arg_buf)) == 0) {
