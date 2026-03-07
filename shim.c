@@ -10,6 +10,8 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/mman.h>
 #include <errno.h>
 
 #define PREFIX_DEFAULT "/data/data/com.termux/files/usr"
@@ -94,8 +96,48 @@ static int should_redirect(const char *pathname) {
     return 0;
 }
 
+static int generate_proc_stat(char *buf, size_t size) {
+    int ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncpu < 1) ncpu = 1;
+    if (ncpu > 256) ncpu = 256;
+    
+    int total = 0;
+    int n;
+    
+    n = snprintf(buf + total, size - total, "cpu  0 0 0 0 0 0 0 0 0 0\n");
+    if (n < 0) return n;
+    total += n;
+    
+    for (int i = 0; i < ncpu && total < (int)size - 32; i++) {
+        n = snprintf(buf + total, size - total, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
+        if (n < 0) return n;
+        total += n;
+    }
+    
+    n = snprintf(buf + total, size - total, "intr 0\nctxt 0\nbtime %ld\nprocesses 1\nprocs_running 1\nprocs_blocked 0\n", time(NULL));
+    if (n < 0) return n;
+    total += n;
+    
+    return total;
+}
+
 static int do_openat(int (*real_fn)(int, const char *, int, ...),
                      int dirfd, const char *pathname, int flags, va_list ap) {
+    if (pathname && strcmp(pathname, "/proc/stat") == 0) {
+        int fd = memfd_create("proc_stat", MFD_CLOEXEC);
+        if (fd >= 0) {
+            char buf[2048];
+            int n = generate_proc_stat(buf, sizeof(buf));
+            if (n > 0) {
+                ssize_t written = write(fd, buf, n);
+                if (written == n && lseek(fd, 0, SEEK_SET) == 0) {
+                    return fd;
+                }
+            }
+            close(fd);
+        }
+    }
+
     if ((flags & O_DIRECTORY) && should_redirect(pathname)) {
         int safe_fd = get_safe_dir_fd();
         if (safe_fd >= 0) {
