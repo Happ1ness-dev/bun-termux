@@ -27,6 +27,11 @@ make && make install
 
 # Test
 bun --version
+
+# "--backend=copyfile" is REQUIRED on Android
+BUN_OPTIONS="--backend=copyfile --os=android" bun install -g cowsay
+
+cowsay "bun-termux works!"
 ```
 
 ## Prerequisites
@@ -59,10 +64,12 @@ Installs to `~/.bun/` by default (defined by `BUN_INSTALL`).
 ## How It Works
 
 1. Wrapper uses userland exec to replace itself with glibc's `ld.so` without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the ld library like when using grun), making compiled binaries work out of the box.
-2. Shim preloads via `ld.so --preload` and intercepts `openat()` on `/`, `/data`, `/data/data` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android.
-3. Wrapper sets `BUN_FAKE_ROOT` env var if it's unset. The shim uses this variable to know where to redirect `/`, `/data`, `/data/data`.
-4. `--library-path` is passed to `ld.so` to make sure glibc libraries are found
-5. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (`/data/data/com.termux/files/usr/tmp`).
+2. Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
+3. Shim preloads via `ld.so --preload` and intercepts `openat()` on `/`, `/data`, `/data/data` `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android.
+4. Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
+5. The shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
+6. `--library-path` is passed to `ld.so` to make sure glibc libraries are found.
+7. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
 
 ## Environment Variables
 
