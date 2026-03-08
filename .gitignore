@@ -33,3 +33,7 @@ core.*
 *.tmp
 *.temp
 *.bak
+
+# Python
+*.pyc
+__pycache__
