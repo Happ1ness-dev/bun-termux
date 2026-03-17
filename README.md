@@ -1,6 +1,18 @@
-# Bun-Termux
+<h1 align="center">Bun-Termux</h1>
 
-Run Bun on Termux (Android) without proot. **aarch64 only.**
+<p align="center">
+  Run Bun on Termux (Android) without proot. <b>aarch64 only.</b>
+</p>
+
+<p align="center">
+  <a href="docs/README.md#installation">Installation</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="docs/README.md">Documentation</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="docs/troubleshooting.md">Known Issues</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#credits">Credits</a>
+</p>
 
 ## Quick Start
 
@@ -34,54 +46,30 @@ BUN_OPTIONS="--backend=copyfile --os=android" bun install -g cowsay
 cowsay "bun-termux works!"
 ```
 
-## Prerequisites
-
-Normal use:
-- Termux with glibc installed (`pkg install glibc-repo; pkg install glibc-runner`)
-- Original Bun installed with [official script](https://github.com/oven-sh/bun?tab=readme-ov-file#install) at `~/.bun/bin/bun` (or `buno` if already renamed)
-- Clang compiler
-
-For tests:
-- `file` (`pkg install file`)
-- `nodejs` (`pkg install nodejs`)
-
-## Build
-
-```bash
-make
-```
-
-This will compile the wrapper and the LD_PRELOAD shim.
-
-## Install
-
-```bash
-make install
-```
-
-Installs to `~/.bun/` by default (defined by `BUN_INSTALL`).
-
 ## How It Works
 
-1. Wrapper uses userland exec to replace itself with glibc's `ld.so` without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the ld library like when using grun), making compiled binaries work out of the box.
-2. Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
-3. Shim preloads via `ld.so --preload` and intercepts `openat()` on `/`, `/data`, `/data/data` `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android.
-4. Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
-5. The shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
-6. `--library-path` is passed to `ld.so` to make sure glibc libraries are found.
-7. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
+Bun is built for glibc, not Android's bionic libc, and needs access to paths that Android restricts. bun-termux solves this with two components:
+
+**1. Wrapper (`bun`)**
+Uses "userland exec" to launch the real Bun binary through glibc's dynamic linker. This technique means `bun build --compile` outputs embed the wrapper, making binaries work.
+
+**2. LD_PRELOAD Shim (`bun-shim.so`)**
+Intercepts system calls to work around Android restrictions:
+- Redirects `/`, `/data`, `/storage` → fake root directory (avoids permission denied)
+- Redirects shebang paths (e.g. `/usr/bin/env`) → Termux prefix
+- Fakes `/proc/stat` → makes `os.cpus()` work
+
+See [docs/README.md](docs/README.md#how-it-works) for the full technical breakdown.
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BUN_INSTALL` | `~/.bun` | Installation prefix. Controls where the wrapper looks for `buno`, `bun-shim.so`, and the fake-root directory |
-| `BUN_BINARY_PATH` | `$(BUN_INSTALL)/bin/buno` | Override the path to the original bun binary |
-| `BUN_FAKE_ROOT` | `$(BUN_INSTALL)/tmp/fake-root` | Set by the wrapper only if not already present; used by the shim as the redirect target for `/`, `/data`, `/data/data`. |
-| `GLIBC_LD_SO` | `/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1` | Path to glibc's dynamic linker |
-| `GLIBC_LIB` | `/data/data/com.termux/files/usr/glibc/lib` | Directory containing glibc shared libraries |
-| `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Temporary directory for shim (fallback if `BUN_FAKE_ROOT` is unset) |
+| Variable | Description |
+|----------|-------------|
+| `BUN_INSTALL` | Installation prefix (`~/.bun`) |
+| `BUN_BINARY_PATH` | Override path to original bun binary |
+| `BUN_OPTIONS` | Used by Bun for options/args |
 
+See [docs/README.md](docs/README.md#environment-variables) for all variables and defaults.
 
 ## Limitations
 
@@ -90,7 +78,10 @@ Installs to `~/.bun/` by default (defined by `BUN_INSTALL`).
 3. Bun install/add/update/remove commands still require `BUN_OPTIONS="--backend=copyfile"` env var due to Android being Android.
 4. If bun somehow fails to walk the current path due to permission error, it'll fail to get the current env vars too. I'll have to investigate why.
 
-For troubleshooting, refer to [troubleshooting.md](troubleshooting.md)
+
+## Troubleshooting
+
+For troubleshooting, refer to [troubleshooting.md](docs/troubleshooting.md)
 
 ## Credits
 
