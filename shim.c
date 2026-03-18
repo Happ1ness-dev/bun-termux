@@ -55,10 +55,12 @@ static const char *translate_path(const char *path, char *buf, size_t bufsize) {
 
 __attribute__((constructor))
 static void init_shim(void) {
+    const char *orig;
+
     real_openat = dlsym(RTLD_NEXT, "openat");
     real_openat64 = dlsym(RTLD_NEXT, "openat64");
     real_execve = dlsym(RTLD_NEXT, "execve");
-    
+
     if (!real_openat || !real_openat64 || !real_execve) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
         syscall(SYS_write, STDERR_FILENO, msg, sizeof(msg) - 1);
@@ -73,6 +75,16 @@ static void init_shim(void) {
     if (!SAFE_DIR) SAFE_DIR = "/data/data/com.termux/files/usr/tmp";
     safe_dir_fd = real_openat(AT_FDCWD, SAFE_DIR,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
+
+    /* Restore original LD_* variables that were filtered during userland exec */
+    if ((orig = getenv("BUN_TERMUX_ORIG_LD_PRELOAD"))) {
+        setenv("LD_PRELOAD", orig, 1);
+        unsetenv("BUN_TERMUX_ORIG_LD_PRELOAD");
+    }
+    if ((orig = getenv("BUN_TERMUX_ORIG_LD_LIBRARY_PATH"))) {
+        setenv("LD_LIBRARY_PATH", orig, 1);
+        unsetenv("BUN_TERMUX_ORIG_LD_LIBRARY_PATH");
+    }
 }
 
 static int get_safe_dir_fd(void) {

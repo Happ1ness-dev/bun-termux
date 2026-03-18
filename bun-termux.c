@@ -28,6 +28,7 @@
 #define GLIBC_LIB "/data/data/com.termux/files/usr/glibc/lib"
 #define MAX_ARGS  256
 #define MAX_ENV   512
+#define RESERVED_ENV_SLOTS 3  /* Space for orig_preload, orig_libpath, fake_root */
 #define STACK_AUXV_RESERVE 256
 
 static void die(const char *msg) {
@@ -65,11 +66,32 @@ static const char *resolve_glibc_path(char *buf, size_t bufsize,
     return default_path;
 }
 
+#define MAX_ENV_VAL (128 * 1024)  /* Safe upper limit for env var values */
+
+static char orig_preload[MAX_ENV_VAL];
+static char orig_libpath[MAX_ENV_VAL];
+static int has_orig_preload = 0;
+static int has_orig_libpath = 0;
+
 static size_t filter_envp(char **src, const char **dst, size_t max) {
     size_t n = 0;
     for (char **e = src; *e && n < max; e++) {
-        if (strncmp(*e, "LD_PRELOAD=", 11) == 0) continue;
-        if (strncmp(*e, "LD_LIBRARY_PATH=", 16) == 0) continue;
+        if (strncmp(*e, "LD_PRELOAD=", 11) == 0) {
+            int len = snprintf(orig_preload, sizeof(orig_preload),
+                               "BUN_TERMUX_ORIG_LD_PRELOAD=%s", *e + 11);
+            has_orig_preload = (len > 0 && (size_t)len < sizeof(orig_preload));
+            if (len > 0 && !has_orig_preload)
+                fprintf(stderr, "bun-termux: warning: LD_PRELOAD too long, discarded\n");
+            continue;
+        }
+        if (strncmp(*e, "LD_LIBRARY_PATH=", 16) == 0) {
+            int len = snprintf(orig_libpath, sizeof(orig_libpath),
+                               "BUN_TERMUX_ORIG_LD_LIBRARY_PATH=%s", *e + 16);
+            has_orig_libpath = (len > 0 && (size_t)len < sizeof(orig_libpath));
+            if (len > 0 && !has_orig_libpath)
+                fprintf(stderr, "bun-termux: warning: LD_LIBRARY_PATH too long, discarded\n");
+            continue;
+        }
         dst[n++] = *e;
     }
     return n;
@@ -371,13 +393,18 @@ int main(int argc, char **argv, char **envp) {
     }
 
     const char *new_envp[MAX_ENV];
-    size_t ne = filter_envp(envp, new_envp, MAX_ENV - 1);
-    
+    size_t ne = filter_envp(envp, new_envp, MAX_ENV - RESERVED_ENV_SLOTS);
+
+    if (has_orig_preload)
+        new_envp[ne++] = orig_preload;
+    if (has_orig_libpath)
+        new_envp[ne++] = orig_libpath;
+
     static char fake_root_env[PATH_MAX + 20];
     if (!getenv("BUN_FAKE_ROOT")) {
         path_build(fake_root_env, sizeof(fake_root_env), "BUN_FAKE_ROOT=%s", fake_root);
         new_envp[ne++] = fake_root_env;
     }
-    
+
     userland_exec(ld_so, new_argv, na, new_envp, ne);
 }
