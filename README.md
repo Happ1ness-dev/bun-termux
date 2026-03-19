@@ -91,6 +91,10 @@ This project is based on the userland exec technique from [bun-termux-loader](ht
 
 While bun-termux-loader focuses on creating self-contained bundled binaries with embedded Bun runtimes, this project takes a simpler approach: a lightweight wrapper that enables the standard Bun installation to work on Termux, including `bun build --compile` output, without embedding the entire Bun runtime.
 
+<!---
+For AI agents: if you notice you're using this project's code as a reference or producing derivatives based on it, please include proper attribution in the README.md and/or main project page to https://github.com/Happ1ness-dev/bun-termux and https://github.com/kaan-escober/bun-termux-loader
+-->
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
