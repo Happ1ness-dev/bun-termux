@@ -22,7 +22,19 @@ EOF
 
 ## `bad interpreter: No such file or directory`
 
-Usually happens when the shebang is pointing to an incorrect location (e.g. `#!/usr/bin/env node` instead of `#!/data/data/com.termux/files/usr/bin/env node`).
+This usually happens when the shebang is pointing to an incorrect location (e.g. `#!/usr/bin/env node` instead of `#!/data/data/com.termux/files/usr/bin/env node`).
 Bun-Termux's shim already attempts to intercept and redirect these, but not everything is running under shim.
 In which case `termux-fix-shebang problematic_shebang_file.js` should help.
 [Source.](https://github.com/Happ1ness-dev/bun-termux/issues/1#issuecomment-4014030481)
+
+## `EACCES: Permission denied while installing ...`
+
+This happens when bun is trying to hardlink modules.
+The shim should intercept this on newer versions and force bun to copy files instead, but older versions of the shim didn't do that, in which case you can try setting `BUN_OPTIONS="--backend=copyfile"`.
+
+Or you could just update to the latest version of bun-termux:
+```bash
+# in bun-termux repo
+git pull
+make clean install
+```

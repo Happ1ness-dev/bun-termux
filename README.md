@@ -40,8 +40,8 @@ make && make install
 # Test
 bun --version
 
-# "--backend=copyfile" is REQUIRED on Android
-BUN_OPTIONS="--backend=copyfile --os=android" bun install -g cowsay
+# "--os=android" helps with native modules on Android
+BUN_OPTIONS="--os=android" bun install -g cowsay
 
 cowsay "bun-termux works!"
 ```
@@ -58,6 +58,7 @@ Intercepts system calls to work around Android restrictions:
 - Redirects `/`, `/data`, `/storage` → fake root directory (avoids permission denied)
 - Redirects shebang paths (e.g. `/usr/bin/env`) → Termux prefix
 - Fakes `/proc/stat` → makes `os.cpus()` work
+- Stubs hardlinking → makes `bun install` work
 
 See [docs/README.md](docs/README.md#how-it-works) for the full technical breakdown.
 
@@ -75,8 +76,9 @@ See [docs/README.md](docs/README.md#environment-variables) for all variables and
 
 1. aarch64 only, because of hardcoded assembly and syscalls. Maybe I'll add support for other architectures in the future.
 2. Binaries built with `bun build --compile` have wrapper embedded, requiring `buno`, `bun-shim.so` and glibc to be present on the system where they run.
-3. Bun install/add/update/remove commands still require `BUN_OPTIONS="--backend=copyfile"` env var due to Android being Android.
+3. Bun install/add/update/remove commands might require `BUN_OPTIONS="--os=android"` env var if they install native modules.
 4. If bun somehow fails to walk the current path due to permission error, it'll fail to get the current env vars too. I'll have to investigate why.
+5. When using `bun install`, some module install scripts might fail without `BUN_OPTIONS="--verbose"`.
 
 
 ## Troubleshooting

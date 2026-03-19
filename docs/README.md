@@ -55,7 +55,7 @@ This will:
 
 Use as normal Bun. (e.g. `bun script.js`)
 
-For bun package manager, set `BUN_OPTIONS` to `--backend=copyfile` to avoid permission errors. Some native modules might need `--backend=copyfile --os=android`.
+For bun package manager, some native modules might need `BUN_OPTIONS="--os=android"`.
 
 For bundled binaries, see [Bundled Binaries](#bundled-binaries).
 
@@ -65,11 +65,14 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 
 1. Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-linux-aarch64.so.1`) without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the linker like when using grun), making compiled binaries work out of the box.
 2. Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
-3. Shim preloads via the dynamic linker's `--preload` option and intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android.
-4. Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
-5. The shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
-6. `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
-7. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
+3. Wrapper backs up original LD_PRELOAD and LD_LIBRARY_PATH to BUN_TERMUX_ORIG_LD_PRELOAD and BUN_TERMUX_ORIG_LD_LIBRARY_PATH.
+4. `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
+5. Shim preloads via the dynamic linker's `--preload` option and intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android.
+6. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
+7. Shim restores original LD_PRELOAD and LD_LIBRARY_PATH from BUN_TERMUX_ORIG_* env vars, ensuring that child processes inherit them.
+8. Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
+9. Shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
+10. Shim stubs `linkat()` and returns `EXDEV` (`error.NotSameFileSystem`), which forces bun to fall back to copyfile when installing packages.
 
 ## Environment Variables
 
@@ -78,7 +81,7 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 | `BUN_INSTALL` | `~/.bun` | Both | Installation prefix. Controls where the wrapper looks for `buno`, `bun-shim.so`, and the fake-root directory |
 | `BUN_BINARY_PATH` | `$BUN_INSTALL/bin/buno` if `BUN_INSTALL` is set, otherwise `<wrapper_dir>/buno` | Runtime | Override the path to the original bun binary |
 | `BUN_FAKE_ROOT` | `$(BUN_INSTALL)/tmp/fake-root` | Runtime | Set by the wrapper only if not already present; used by the shim as the redirect target for `/`, `/data`, `/data/data` |
-| `BUN_OPTIONS` | Unset | Runtime | Pass options to Bun (e.g. `--backend=copyfile --os=android` for package manager operations) |
+| `BUN_OPTIONS` | Unset | Runtime | Pass options to Bun (e.g. `--os=android` for native modules, `--verbose` for debugging install scripts) |
 | `PREFIX` | `/data/data/com.termux/files/usr` | Runtime | Termux installation prefix; used by shim for shebang path translation |
 | `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Runtime | Temporary directory for shim (fallback if `BUN_FAKE_ROOT` is unset) |
 | `GLIBC_ROOT` | `/data/data/com.termux/files/usr/glibc` | Build | Build-time override for glibc installation path (Makefile only) |
@@ -91,8 +94,9 @@ Scope: `Runtime` = read by wrapper/shim at runtime, `Build` = used by Makefile o
 
 1. aarch64 only, because of hardcoded assembly and syscalls. Maybe I'll add support for other architectures in the future.
 2. Binaries built with `bun build --compile` have wrapper embedded, requiring `buno`, `bun-shim.so` and glibc to be present on the system where they run.
-3. Bun install/add/update/remove commands still require `BUN_OPTIONS="--backend=copyfile"` env var due to Android being Android.
+3. Bun install/add/update/remove commands might require `BUN_OPTIONS="--os=android"` env var if they install native modules.
 4. If bun somehow fails to walk the current path due to permission error, it'll fail to get the current env vars too. I'll have to investigate why.
+5. When using `bun install`, some module install scripts might fail without `BUN_OPTIONS="--verbose"`.
 
 ## Bundled Binaries
 
