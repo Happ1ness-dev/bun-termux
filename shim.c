@@ -24,6 +24,7 @@ static const char *PREFIX = NULL;
 static int (*real_openat)(int, const char *, int, ...) = NULL;
 static int (*real_openat64)(int, const char *, int, ...) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
+static int (*real_linkat)(int, const char *, int, const char *, int) = NULL;
 
 /* Translate paths to use $PREFIX */
 static const char *translate_path(const char *path, char *buf, size_t bufsize) {
@@ -60,6 +61,7 @@ static void init_shim(void) {
     real_openat = dlsym(RTLD_NEXT, "openat");
     real_openat64 = dlsym(RTLD_NEXT, "openat64");
     real_execve = dlsym(RTLD_NEXT, "execve");
+    real_linkat = dlsym(RTLD_NEXT, "linkat");
 
     if (!real_openat || !real_openat64 || !real_execve) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
@@ -259,4 +261,20 @@ int execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
     
     return real_execve(pathname, argv, envp);
+}
+
+/*
+ * Intercept linkat() and return EXDEV (error.NotSameFileSystem) to force bun to fallback to copyfile.
+ * 
+ * See: bun-bun-v1.3.10/src/install/PackageInstall.zig
+ */
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
+    (void)olddirfd;
+    (void)oldpath;
+    (void)newdirfd;
+    (void)newpath;
+    (void)flags;
+    
+    errno = EXDEV;
+    return -1;
 }
