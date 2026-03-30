@@ -360,7 +360,7 @@ int main(int argc, char **argv, char **envp) {
     char bun_path[PATH_MAX];
     
     const char *install_prefix = bun_install ? bun_install : self_dir;
-    path_build(shim_path, sizeof(shim_path), "%s/lib/bun-shim.so", install_prefix);
+    path_build(shim_path, sizeof(shim_path), "%s/../lib/bun-shim.so", self_dir);
     path_build(fake_root, sizeof(fake_root), "%s/tmp/fake-root", install_prefix);
     
     if (bun_binary) {
