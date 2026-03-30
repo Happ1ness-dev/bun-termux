@@ -358,11 +358,28 @@ int main(int argc, char **argv, char **envp) {
     char shim_path[PATH_MAX];
     char fake_root[PATH_MAX];
     char bun_path[PATH_MAX];
+    struct stat st;
+
+    if (bun_install) {
+        path_build(shim_path, sizeof(shim_path), "%s/lib/bun-shim.so", bun_install);
+        if (stat(shim_path, &st) == 0) {
+            path_build(fake_root, sizeof(fake_root), "%s/tmp/fake-root", bun_install);
+            goto have_shim;
+        }
+    }
     
-    const char *install_prefix = bun_install ? bun_install : self_dir;
-    path_build(shim_path, sizeof(shim_path), "%s/lib/bun-shim.so", install_prefix);
-    path_build(fake_root, sizeof(fake_root), "%s/tmp/fake-root", install_prefix);
+    path_build(shim_path, sizeof(shim_path), "%s/bun-shim.so", self_dir);
+    if (stat(shim_path, &st) == 0) {
+        path_build(fake_root, sizeof(fake_root), "%s/tmp/fake-root", self_dir);
+        goto have_shim;
+    }
     
+    path_build(shim_path, sizeof(shim_path), "%s/../lib/bun-shim.so", self_dir);
+    if (stat(shim_path, &st) != 0)
+        die("shim not found. Run 'make install' first.");
+    path_build(fake_root, sizeof(fake_root), "%s/../tmp/fake-root", self_dir);
+
+have_shim:
     if (bun_binary) {
         path_build(bun_path, sizeof(bun_path), "%s", bun_binary);
     } else if (bun_install) {
@@ -372,11 +389,6 @@ int main(int argc, char **argv, char **envp) {
     }
     
     ensure_dir(fake_root);
-    
-    struct stat st;
-    if (stat(shim_path, &st) != 0) {
-        die("shim not found. Run 'make install' first.");
-    }
     
     const char *new_argv[MAX_ARGS];
     size_t na = 0;
