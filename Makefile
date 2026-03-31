@@ -52,10 +52,13 @@ install: bun-termux bun-shim.so
 	fi
 	cp bun-termux $(BUN_BIN_DIR)/bun
 	cp bun-shim.so $(BUN_LIB_DIR)/bun-shim.so
+	cp helper_scripts/bunx $(BUN_BIN_DIR)/bunx
+	chmod +x $(BUN_BIN_DIR)/bunx
 	@echo "Installed!"
 	@echo "  Wrapper: $(BUN_BIN_DIR)/bun"
 	@echo "  Original: $(BUN_BIN_DIR)/buno"
 	@echo "  Shim:    $(BUN_LIB_DIR)/bun-shim.so"
+	@echo "  Helper:  $(BUN_BIN_DIR)/bunx"
 	@echo "Run '$(BUN_BIN_DIR)/bun --version' to test"
 
 # Test targets
@@ -135,6 +138,7 @@ uninstall:
 	@echo "Uninstalling from $(BUN_PREFIX)..."
 	@-mv "$(BUN_BIN_DIR)/buno" "$(BUN_BIN_DIR)/bun" 2>/dev/null && echo "Restored original bun"
 	@-rm -f "$(BUN_LIB_DIR)/bun-shim.so"
+	@-rm -f "$(BUN_BIN_DIR)/bunx"
 	@-rmdir "$(BUN_LIB_DIR)" 2>/dev/null
 	@-rmdir "$(BUN_TMP_DIR)/fake-root" 2>/dev/null
 	@-rmdir "$(BUN_TMP_DIR)" 2>/dev/null
