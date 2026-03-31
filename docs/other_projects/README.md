@@ -4,6 +4,7 @@ Community guides and examples for using Bun-Termux with various projects.
 
 ## Guides
 
+- [Drivebase](./drivebase/README.md) - Cloud-agnostic unified file manager with E2EE encryption
 - [OpenCode](./opencode/README.md) - AI coding assistant
 
 ## Contributing
