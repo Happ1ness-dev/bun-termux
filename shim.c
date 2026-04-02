@@ -14,17 +14,26 @@
 #include <sys/mman.h>
 #include <errno.h>
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 #define PREFIX_DEFAULT "/data/data/com.termux/files/usr"
 #define SHEBANG_MAX 256
 
 static const char *SAFE_DIR = NULL;
 static int safe_dir_fd = -1;
 static const char *PREFIX = NULL;
+static const char *TMPDIR = NULL;
+static const char *WRAPPER_PATH = NULL;
+static const char *TARGET_PATH = NULL;
 
 static int (*real_openat)(int, const char *, int, ...) = NULL;
 static int (*real_openat64)(int, const char *, int, ...) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
 static int (*real_linkat)(int, const char *, int, const char *, int) = NULL;
+static int (*real_mkdir)(const char *, mode_t) = NULL;
+static int (*real_symlink)(const char *, const char *) = NULL;
 
 /* Translate paths to use $PREFIX */
 static const char *translate_path(const char *path, char *buf, size_t bufsize) {
@@ -54,6 +63,19 @@ static const char *translate_path(const char *path, char *buf, size_t bufsize) {
     return path;
 }
 
+/* Translate /tmp paths to use $TMPDIR instead.
+ * path + 4 skips "/tmp" prefix to append remainder (e.g., "/tmp/foo" -> TMPDIR + "/foo").
+ */
+static const char *translate_tmp(const char *path, char *buf, size_t len) {
+    if (!path || !TMPDIR) return path;
+    if (strcmp(path, "/tmp") == 0 || strncmp(path, "/tmp/", 5) == 0) {
+        int n = snprintf(buf, len, "%s%s", TMPDIR, path + 4);
+        if (n < 0 || (size_t)n >= len) return path;
+        return buf;
+    }
+    return path;
+}
+
 __attribute__((constructor))
 static void init_shim(void) {
     const char *orig;
@@ -62,8 +84,11 @@ static void init_shim(void) {
     real_openat64 = dlsym(RTLD_NEXT, "openat64");
     real_execve = dlsym(RTLD_NEXT, "execve");
     real_linkat = dlsym(RTLD_NEXT, "linkat");
+    real_mkdir = dlsym(RTLD_NEXT, "mkdir");
+    real_symlink = dlsym(RTLD_NEXT, "symlink");
 
-    if (!real_openat || !real_openat64 || !real_execve) {
+    if (!real_openat || !real_openat64 || !real_execve || !real_linkat ||
+        !real_mkdir || !real_symlink) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
         syscall(SYS_write, STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
@@ -71,6 +96,12 @@ static void init_shim(void) {
 
     PREFIX = getenv("PREFIX");
     if (!PREFIX) PREFIX = PREFIX_DEFAULT;
+
+    TMPDIR = getenv("TMPDIR");
+    if (!TMPDIR) TMPDIR = "/data/data/com.termux/files/usr/tmp";
+
+    WRAPPER_PATH = getenv("BUN_TERMUX_WRAPPER");
+    TARGET_PATH = getenv("BUN_TERMUX_TARGET");
 
     SAFE_DIR = getenv("BUN_FAKE_ROOT");
     if (!SAFE_DIR) SAFE_DIR = getenv("TMPDIR");
@@ -182,6 +213,29 @@ int openat64(int dirfd, const char *pathname, int flags, ...) {
     return result;
 }
 
+/* Replace first occurrence of 'search' with 'replace' in 'path_var'.
+ * Used specifically for PATH variable rewriting.
+ * Caller must free the returned string.
+ */
+static char *replace_in_path(const char *path_var, const char *search, const char *replace) {
+    const char *found = strstr(path_var, search);
+    if (!found) return NULL;
+    
+    size_t prefix_len = found - path_var;
+    size_t search_len = strlen(search);
+    size_t replace_len = strlen(replace);
+    size_t suffix_len = strlen(found + search_len);
+    
+    char *result = malloc(prefix_len + replace_len + suffix_len + 1);
+    if (!result) return NULL;
+    
+    memcpy(result, path_var, prefix_len);
+    memcpy(result + prefix_len, replace, replace_len);
+    memcpy(result + prefix_len + replace_len, found + search_len, suffix_len + 1);
+    
+    return result;
+}
+
 /*
  * Parse shebang and return translated interpreter path.
  * Returns: 0 on success (shebang found and parsed), -1 if not a shebang.
@@ -230,6 +284,34 @@ static int parse_shebang(const char *path, char *interp, size_t interp_size,
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
     char interp_buf[256], arg_buf[256], translated_buf[256];
+    char **new_envp = NULL, **new_argv = NULL;
+    char *new_path = NULL;
+    int ret = -1;
+    
+    /* Rewrite PATH if it contains /tmp/bun-node */
+    for (int i = 0; envp && envp[i]; i++) {
+        if (strncmp(envp[i], "PATH=", 5) == 0) {
+            char replacement[PATH_MAX];
+            int n = snprintf(replacement, sizeof(replacement), "%s/bun-node", TMPDIR);
+            if (n < 0 || (size_t)n >= sizeof(replacement))
+                break; /* TMPDIR too long - skip PATH rewrite */
+            
+            new_path = replace_in_path(envp[i], "/tmp/bun-node", replacement);
+            if (new_path) {
+                int env_count = 0;
+                while (envp[env_count]) env_count++;
+                
+                new_envp = malloc((env_count + 1) * sizeof(char *));
+                if (new_envp) {
+                    for (int j = 0; j < env_count; j++)
+                        new_envp[j] = (j == i) ? new_path : (char *)envp[j];
+                    new_envp[env_count] = NULL;
+                    envp = (char *const *)new_envp;
+                }
+            }
+            break;
+        }
+    }
     
     if (parse_shebang(pathname, interp_buf, sizeof(interp_buf),
                       arg_buf, sizeof(arg_buf)) == 0) {
@@ -240,10 +322,10 @@ int execve(const char *pathname, char *const argv[], char *const envp[]) {
         
         int has_arg = arg_buf[0] ? 1 : 0;
         int new_argc = 1 + has_arg + 1 + orig_argc;
-        char **new_argv = malloc((new_argc + 1) * sizeof(char *));
+        new_argv = malloc((new_argc + 1) * sizeof(char *));
         if (!new_argv) {
             errno = ENOMEM;
-            return -1;
+            goto cleanup;
         }
         
         int i = 0;
@@ -253,14 +335,16 @@ int execve(const char *pathname, char *const argv[], char *const envp[]) {
         for (int j = 1; j < orig_argc; j++) new_argv[i++] = argv[j];
         new_argv[i] = NULL;
         
-        int ret = real_execve(translated, new_argv, envp);
-        int saved_errno = errno;
-        free(new_argv);
-        errno = saved_errno;
-        return ret;
+        ret = real_execve(translated, new_argv, envp);
+    } else {
+        ret = real_execve(pathname, argv, envp);
     }
     
-    return real_execve(pathname, argv, envp);
+cleanup:
+    free(new_argv);
+    free(new_path);
+    free(new_envp);
+    return ret;
 }
 
 /*
@@ -274,7 +358,26 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
     (void)newdirfd;
     (void)newpath;
     (void)flags;
-    
+
     errno = EXDEV;
     return -1;
+}
+
+int mkdir(const char *pathname, mode_t mode) {
+    char buf[PATH_MAX];
+    pathname = translate_tmp(pathname, buf, sizeof(buf));
+    return real_mkdir(pathname, mode);
+}
+
+int symlink(const char *target, const char *linkpath) {
+    char tbuf[PATH_MAX], lbuf[PATH_MAX];
+    
+    target = translate_tmp(target, tbuf, sizeof(tbuf));
+    linkpath = translate_tmp(linkpath, lbuf, sizeof(lbuf));
+    
+    if (TARGET_PATH && WRAPPER_PATH && strcmp(target, TARGET_PATH) == 0) {
+        target = WRAPPER_PATH;
+    }
+    
+    return real_symlink(target, linkpath);
 }

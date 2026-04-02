@@ -418,5 +418,17 @@ have_shim:
         new_envp[ne++] = fake_root_env;
     }
 
+    static char wrapper_env[PATH_MAX + 32];
+    static char target_env[PATH_MAX + 32];
+    char self_path[PATH_MAX];
+    ssize_t self_len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+    if (self_len > 0) {
+        self_path[self_len] = '\0';
+        snprintf(wrapper_env, sizeof(wrapper_env), "BUN_TERMUX_WRAPPER=%s", self_path);
+        new_envp[ne++] = wrapper_env;
+    }
+    snprintf(target_env, sizeof(target_env), "BUN_TERMUX_TARGET=%s", bun_path);
+    new_envp[ne++] = target_env;
+
     userland_exec(ld_so, new_argv, na, new_envp, ne);
 }
