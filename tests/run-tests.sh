@@ -33,6 +33,10 @@ test_node_shebang() {
     BUN_INSTALL="$TEST_DIR" "$TEST_DIR/bin/bun" -e "const result = Bun.spawnSync(['$SCRIPT_DIR/test-node-shebang.js']); console.log(result.stdout.toString());"
 }
 
+test_dns_lookup() {
+    BUN_INSTALL="$TEST_DIR" "$TEST_DIR/bin/bun" "$SCRIPT_DIR/test-dns-lookup.mjs"
+}
+
 test_nested_fake_root() {
     local nested="$TEST_DIR/tmp/nested-fake-root"
     mkdir -p "$nested"
@@ -74,6 +78,7 @@ run_test "/proc/self/exe preservation" test_proc_self_exe
 run_test "Environment variable passthrough" test_env_passthrough
 run_test "/proc/stat spoofing" test_os_cpus
 run_test "Shebang redirection" test_node_shebang
+run_test "DNS lookup" test_dns_lookup
 run_test "Nested BUN_FAKE_ROOT inheritance" test_nested_fake_root
 run_test "Native modules (.so and .node)" test_native_modules
 run_test "Native modules compiled binary" test_native_modules_compiled
