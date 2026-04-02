@@ -30,6 +30,8 @@ static const char *TARGET_PATH = NULL;
 
 static int (*real_openat)(int, const char *, int, ...) = NULL;
 static int (*real_openat64)(int, const char *, int, ...) = NULL;
+static FILE *(*real_fopen)(const char *, const char *) = NULL;
+static FILE *(*real_fopen64)(const char *, const char *) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
 static int (*real_linkat)(int, const char *, int, const char *, int) = NULL;
 static int (*real_mkdir)(const char *, mode_t) = NULL;
@@ -76,19 +78,33 @@ static const char *translate_tmp(const char *path, char *buf, size_t len) {
     return path;
 }
 
+static const char *translate_etc(const char *path, char *buf, size_t bufsize) {
+    if (!path || !PREFIX) return path;
+    if (strcmp(path, "/etc/resolv.conf") == 0 ||
+        strcmp(path, "/etc/nsswitch.conf") == 0 ||
+        strcmp(path, "/etc/hosts") == 0) {
+        int n = snprintf(buf, bufsize, "%s%s", PREFIX, path);
+        if (n < 0 || (size_t)n >= bufsize) return path;
+        return buf;
+    }
+    return path;
+}
+
 __attribute__((constructor))
 static void init_shim(void) {
     const char *orig;
 
     real_openat = dlsym(RTLD_NEXT, "openat");
     real_openat64 = dlsym(RTLD_NEXT, "openat64");
+    real_fopen = dlsym(RTLD_NEXT, "fopen");
+    real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
     real_execve = dlsym(RTLD_NEXT, "execve");
     real_linkat = dlsym(RTLD_NEXT, "linkat");
     real_mkdir = dlsym(RTLD_NEXT, "mkdir");
     real_symlink = dlsym(RTLD_NEXT, "symlink");
 
-    if (!real_openat || !real_openat64 || !real_execve || !real_linkat ||
-        !real_mkdir || !real_symlink) {
+    if (!real_openat || !real_openat64 || !real_fopen || !real_fopen64 ||
+        !real_execve || !real_linkat || !real_mkdir || !real_symlink) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
         syscall(SYS_write, STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
@@ -211,6 +227,21 @@ int openat64(int dirfd, const char *pathname, int flags, ...) {
     int result = do_openat(real_openat64, dirfd, pathname, flags, ap);
     va_end(ap);
     return result;
+}
+
+/* c-ares reads DNS configs via fopen, not openat */
+FILE *fopen(const char *pathname, const char *mode) {
+    char buf[PATH_MAX];
+    if (pathname)
+        pathname = translate_etc(pathname, buf, sizeof(buf));
+    return real_fopen(pathname, mode);
+}
+
+FILE *fopen64(const char *pathname, const char *mode) {
+    char buf[PATH_MAX];
+    if (pathname)
+        pathname = translate_etc(pathname, buf, sizeof(buf));
+    return real_fopen64(pathname, mode);
 }
 
 /* Replace first occurrence of 'search' with 'replace' in 'path_var'.
