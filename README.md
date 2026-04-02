@@ -16,9 +16,10 @@
 
 ## Quick Start
 
+### 1. Install
 ```bash
 # Prerequisites
-pkg install git curl build-essential glibc-repo
+pkg install git curl clang make glibc-repo python
 pkg install glibc-runner
 
 # Bun install script will skip bashrc if it doesn't exist
@@ -36,14 +37,26 @@ cd bun-termux
 
 # Build and install wrapper
 make && make install
+```
 
-# Test
+### 2. Test
+```bash
 bun --version
 
-# "--os=android" helps with native modules on Android
+# --bun/-b to force bun instead of node
+bun --bun x cowsay "bun-termux works!"
+
+# "--os=android" helps with some native modules
 BUN_OPTIONS="--os=android" bun install -g cowsay
 
 cowsay "bun-termux works!"
+```
+
+> [!TIP]
+> **Symlink bun as node:**
+> If you don't have Node installed, some scripts may fail.
+```bash
+ln -s $HOME/.bun/bin/bun $HOME/.bun/bin/node
 ```
 
 ## How It Works
