@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
+
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -310,12 +310,6 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
     *w++ = 0;
     for (size_t i = 0; i < auxc; i++) { *w++ = auxv[i][0]; *w++ = auxv[i][1]; }
 
-    /* Block all signals before stack switch to prevent handlers running on new stack
-       with old context. ld.so will set up its own signal handling. */
-    sigset_t all;
-    sigfillset(&all);
-    sigprocmask(SIG_BLOCK, &all, NULL);
-
     __asm__ volatile(
         "mov sp, %[sp]\n"
         "mov x0, sp\n"
@@ -328,8 +322,7 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
         "br  %[entry]\n"
         :
         : [sp] "r"((size_t)sp), [entry] "r"(elf.entry)
-        : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10",
-          "x11","x12","x13","x14","x15","x16","x17","x30","memory"
+        : "x0","x1","x2","x3","x4","x5","x6","x7","x30","memory"
     );
     __builtin_unreachable();
 }
