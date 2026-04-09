@@ -1,2 +1,2 @@
-#!/data/data/com.termux/files/usr/bin/bash
-bun x "$@"
+#!/data/data/com.termux/files/usr/bin/env bash
+exec bun x "$@"
