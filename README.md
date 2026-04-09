@@ -17,6 +17,14 @@
 ## Quick Start
 
 ### 1. Install
+
+#### Option 1: Manager
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Happ1ness-dev/bun-termux/main/helper_scripts/bun-termux-manager" | bash -s install
+```
+
+#### Option 2: Manual
 ```bash
 # Prerequisites
 pkg install git curl clang make glibc-repo python
