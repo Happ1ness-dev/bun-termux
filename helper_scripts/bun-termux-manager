@@ -1,0 +1,932 @@
+#!/data/data/com.termux/files/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# Bun-Termux Manager (btm)
+# Installer and manager for bun-termux - a wrapper that makes Bun run on Termux
+# =============================================================================
+
+readonly BTM_VERSION="1.0.0"
+if [[ -t 0 ]] && [[ "${BASH_SOURCE[0]}" != */fd/[0-9]* ]]; then
+    readonly BTM_NAME=$(basename "${BASH_SOURCE[0]}")
+    readonly SCRIPT_PATH=$(realpath "${BASH_SOURCE[0]}")
+else
+    readonly BTM_NAME="bun-termux-manager"
+    readonly SCRIPT_PATH=""
+fi
+
+# Colors
+if [[ -t 1 && -t 2 ]]; then
+    readonly RED='\033[0;31m'
+    readonly GREEN='\033[0;32m'
+    readonly YELLOW='\033[1;33m'
+    readonly BLUE='\033[0;34m'
+    readonly DIM='\033[0;2m'
+    readonly BOLD='\033[1m'
+    readonly RESET='\033[0m'
+else
+    readonly RED='' GREEN='' YELLOW='' BLUE='' DIM='' BOLD='' RESET=''
+fi
+
+# Default paths
+PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+HOME="${HOME:-/data/data/com.termux/files/home}"
+GLIBC_ROOT="${GLIBC_ROOT:-$PREFIX/glibc}"
+BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+readonly BUN_BIN_DIR="$BUN_INSTALL/bin"
+readonly BUN_LIB_DIR="$BUN_INSTALL/lib"
+readonly BTM_SOURCE_DIR="${BTM_SOURCE_DIR:-}"
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
+msg() {
+    echo -e "${BLUE}==>${RESET} $1"
+}
+
+success() {
+    echo -e "${GREEN}[+]${RESET} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[!]${RESET} $1" >&2
+}
+
+die() {
+    echo -e "${RED}[x]${RESET} $1" >&2
+    exit 1
+}
+
+info() {
+    echo -e "${DIM}$1${RESET}"
+}
+
+info_bold() {
+    echo -e "${BOLD}$1${RESET}"
+}
+
+section() {
+    echo
+    echo -e "${BOLD}$1${RESET}"
+    echo
+}
+
+command_exists() {
+    command -v "$1" &>/dev/null
+}
+
+require_arg() {
+    [[ -n "${2:-}" ]] || die "Option $1 requires a value"
+    echo "$2"
+}
+
+declare -a BTM_CMD_ORDER=()
+declare -A BTM_CMD_HELP=()
+
+btm_add_cmd() {
+    BTM_CMD_ORDER+=("$1")
+    BTM_CMD_HELP["$1"]="$2"
+}
+
+show_help() {
+    local cmd="${1:-main}"
+    
+    if [[ "$cmd" == "main" ]]; then
+        echo "Bun-Termux Manager v$BTM_VERSION
+        
+Usage: $BTM_NAME <command> [options]
+
+Commands:"
+        for c in "${BTM_CMD_ORDER[@]}"; do
+            printf "  %-12s%s\n" "$c" "${BTM_CMD_HELP[$c]%%$'\n'*}"
+        done
+        cat << EOF
+
+Run '$BTM_NAME help <command>' for details.
+
+Environment:
+  BUN_INSTALL          Installation prefix (default: ~/.bun)
+  GLIBC_ROOT           glibc root path (default: /data/data/com.termux/files/usr/glibc)
+  BTM_SOURCE_DIR       Source directory hint for building wrapper
+
+Examples:
+  $BTM_NAME install --skip-wrapper --bun-version 1.0.0  # Switch to Bun v1.0.0
+  $BTM_NAME update bun                                  # Update Bun only
+EOF
+    else
+        cmd="${cmd//_/-}"
+        [[ -n "${BTM_CMD_HELP[$cmd]:-}" ]] || die "No help for: $cmd"
+        echo "${BTM_CMD_HELP[$cmd]}"
+    fi
+}
+
+help_check() {
+    case " $* " in
+        *" -h "*|*" --help "*) show_help "${FUNCNAME[1]#cmd_}"; return 0 ;;
+    esac
+    return 1
+}
+
+check_termux() {
+    if [[ -z "${TERMUX_VERSION:-}" ]]; then
+        die "This script is designed for Termux only (TERMUX_VERSION is unset)"
+    fi
+
+    local arch; arch=$(uname -m)
+    if [[ "$arch" != "aarch64" && "$arch" != "arm64" ]]; then
+        die "Only aarch64 architecture is supported (detected: $arch)"
+    fi
+}
+
+# Returns 0 if $1 < $2 ($1 is older than $2)
+version_lt() {
+    [[ "$1" != "$2" && "$(printf '%s\n' "${1#v}" "${2#v}" | sort -V | head -n1)" == "${1#v}" ]]
+}
+
+binary_contains() {
+    [[ -f "$1" ]] && grep -qa -m 1 "$2" "$1" 2>/dev/null
+}
+
+# Check if a binary is the bun-termux wrapper
+# Returns 0 if it's a wrapper, 1 if not or unknown
+is_wrapper_binary() { binary_contains "$1" "bun-termux"; }
+
+# Check if a binary is the original bun
+# Returns 0 if it's bun, 1 if not or unknown
+is_bun_binary() { binary_contains "$1" "JavaScript [Rr]untime"; }
+
+ensure_directories() {
+    mkdir -p "$BUN_BIN_DIR" || die "Failed to create bin directory"
+    mkdir -p "$BUN_LIB_DIR" || die "Failed to create lib directory"
+}
+
+_cleanup_files=()
+
+_cleanup() {
+    [[ ${#_cleanup_files[@]} -gt 0 ]] && rm -rf "${_cleanup_files[@]}" 2>/dev/null || true
+}
+
+trap _cleanup EXIT
+
+# =============================================================================
+# Prerequisite Checks
+# =============================================================================
+
+check_prerequisites() {
+    section "Checking Prerequisites"
+
+    local missing=()
+
+    # Essential packages
+    local packages=("git" "curl" "clang" "make" "python" "unzip")
+    local pkg
+    for pkg in "${packages[@]}"; do
+        if ! command_exists "$pkg"; then
+            missing+=("$pkg")
+        fi
+    done
+
+    command_exists "realpath" || missing+=("coreutils")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        msg "Installing missing packages: ${missing[*]}"
+        pkg update -y || die "Failed to run 'pkg update'"
+        pkg install -y "${missing[@]}" || die "Failed to install packages"
+    fi
+
+    if [[ ! -d "$GLIBC_ROOT" ]]; then
+        msg "Installing glibc..."
+        pkg install -y glibc-repo || die "Failed to install glibc-repo"
+        pkg install -y glibc-runner || die "Failed to install glibc-runner"
+    fi
+
+    if [[ ! -f "$GLIBC_ROOT/lib/ld-linux-aarch64.so.1" ]]; then
+        die "glibc dynamic linker not found at $GLIBC_ROOT/lib/ld-linux-aarch64.so.1"
+    fi
+
+    command_exists "grun" || die "grun command not found after glibc installation"
+
+    success "All prerequisites satisfied"
+}
+
+# =============================================================================
+# GitHub API / Version Helpers
+# =============================================================================
+
+strip_version_prefix() {
+    local v="${1#bun-v}"; v="${v#v}"
+    echo "$v"
+}
+
+# Ensure version tag has 'bun-v' prefix for GitHub releases
+normalize_bun_version_tag() {
+    local v=$(strip_version_prefix "$1")
+    echo "bun-v${v}"
+}
+
+get_latest_bun_version() {
+    curl -Ls -o /dev/null -w "%{url_effective}" "https://github.com/oven-sh/bun/releases/latest" | grep -oE '[^/]+$' || die "Failed to fetch latest Bun version"
+}
+
+get_installed_bun_version() {
+    local version
+
+    if ! is_bun_binary "$BUN_BIN_DIR/bun" && ! is_bun_binary "$BUN_BIN_DIR/buno"; then
+        echo "not installed"; return 1
+    fi
+
+    [[ -x "$BUN_BIN_DIR/bun" ]] && version=$("$BUN_BIN_DIR/bun" --version 2>/dev/null | head -1) || true
+    if [[ -z "$version" && -x "$BUN_BIN_DIR/buno" ]] && command_exists grun; then
+        version=$(grun "$BUN_BIN_DIR/buno" --version 2>/dev/null | head -1)
+    fi
+    
+    [[ -n "$version" ]] && { echo "$version"; return 0; }
+    echo "unknown"; return 1
+}
+
+# =============================================================================
+# Bun Installation
+# =============================================================================
+
+install_bun_official() {
+    local input_version="${1:-latest}"
+    section "Installing Bun (as buno)"
+
+    local target="linux-aarch64" download_url version display_version
+
+    if [[ "$input_version" == "latest" ]]; then
+        version=$(get_latest_bun_version)
+        display_version=$(strip_version_prefix "$version")
+        download_url="https://github.com/oven-sh/bun/releases/latest/download/bun-${target}.zip"
+    else
+        display_version=$(strip_version_prefix "$input_version")
+        version=$(normalize_bun_version_tag "$input_version")
+        download_url="https://github.com/oven-sh/bun/releases/download/${version}/bun-${target}.zip"
+    fi
+
+    msg "Downloading Bun ${display_version} for ${target}..."
+
+    local temp_dir; temp_dir=$(mktemp -d)
+    _cleanup_files+=("$temp_dir")
+
+    local zip_file="$temp_dir/bun.zip"
+    local curl_opts=(-fsSL); [[ -t 1 && -t 2 ]] && curl_opts=(-fSL --progress-bar)
+    curl "${curl_opts[@]}" -o "$zip_file" "$download_url" || \
+        die "Failed to download Bun from $download_url"
+
+    msg "Extracting..."
+    unzip -oq "$zip_file" -d "$temp_dir" || die "Failed to extract Bun"
+
+    local extracted_bun="$temp_dir/bun-${target}/bun"
+    if [[ ! -f "$extracted_bun" ]]; then
+        die "Bun binary not found in extracted archive"
+    fi
+
+    command_exists "grun" || die "Failed to check Bun binary: grun command not found"
+    if ! grun "$extracted_bun" --version &>/dev/null; then
+        die "Downloaded Bun binary doesn't work"
+    fi
+
+    mv -f "$extracted_bun" "$BUN_BIN_DIR/buno" || die "Failed to install buno"
+    chmod +x "$BUN_BIN_DIR/buno" || die "Failed to make buno executable"
+
+    success "Bun ${display_version} installed as buno"
+}
+
+# =============================================================================
+# Wrapper/Shim/bunx Installation
+# =============================================================================
+
+build_from_source() {
+    local src_dir="$1"
+
+    section "Building wrapper and shim"
+
+    if [[ ! -f "$src_dir/Makefile" ]]; then
+        die "Source directory doesn't contain a Makefile"
+    fi
+
+    if [[ ! -f "$src_dir/bun-termux.c" ]] || [[ ! -f "$src_dir/shim.c" ]]; then
+        die "Source files not found in $src_dir"
+    fi
+
+    (cd "$src_dir" && make clean && make) || die "Build failed"
+
+    if [[ ! -f "$src_dir/bun-termux" ]] || [[ ! -f "$src_dir/bun-shim.so" ]]; then
+        die "Build succeeded but output files not found"
+    fi
+
+    success "Build successful"
+}
+
+install_wrapper_components() {
+    local src_dir="$1"
+
+    section "Installing wrapper components"
+
+    if [[ -f "$BUN_BIN_DIR/bun" ]] && [[ ! -f "$BUN_BIN_DIR/buno" ]]; then
+        if is_wrapper_binary "$BUN_BIN_DIR/bun"; then
+            die "Existing bun is the wrapper but buno is missing. Run 'btm install --bun-version latest' to fix."
+        fi
+        warn "Original bun found but no buno exists"
+        msg "Renaming bun to buno (wrapper will be installed as bun)..."
+        mv -f "$BUN_BIN_DIR/bun" "$BUN_BIN_DIR/buno" || die "Failed to rename original bun"
+        success "Original bun renamed to buno"
+    fi
+
+    if [[ ! -f "$src_dir/bun-termux" ]]; then
+        die "Wrapper binary not found at $src_dir/bun-termux"  
+    fi
+    mv -f "$src_dir/bun-termux" "$BUN_BIN_DIR/bun" || die "Failed to install wrapper"
+    chmod +x "$BUN_BIN_DIR/bun"
+    success "Installed wrapper to $BUN_BIN_DIR/bun"
+
+    if [[ ! -f "$src_dir/bun-shim.so" ]]; then
+        die "Shim not found at $src_dir/bun-shim.so"
+    fi
+    mv -f "$src_dir/bun-shim.so" "$BUN_LIB_DIR/" || die "Failed to install shim"
+    success "Installed shim to $BUN_LIB_DIR/bun-shim.so"
+
+    {
+        cat > "$BUN_BIN_DIR/bunx" << 'EOF'
+#!/data/data/com.termux/files/usr/bin/env bash
+exec bun x "$@"
+EOF
+    } || die "Failed to write bunx to $BUN_BIN_DIR/bunx"
+    chmod +x "$BUN_BIN_DIR/bunx" || die "Failed to make bunx executable"
+    success "Created bunx at $BUN_BIN_DIR/bunx"
+
+    install_self "$src_dir" || warn "Failed to install self"
+}
+
+install_self() {
+    local src_dir="${1:-}"
+    local script_path
+
+    if [[ -n "$src_dir" ]] && [[ -f "$src_dir/helper_scripts/bun-termux-manager" ]]; then
+        script_path="$src_dir/helper_scripts/bun-termux-manager"
+    else
+        script_path="$SCRIPT_PATH"
+    fi
+
+    if [[ ! -f "$script_path" ]]; then
+        warn "Could not locate manager script — 'btm' will not be available"
+        return 1
+    fi
+
+    # Atomic install: write to temp, then mv
+    local temp_manager; temp_manager=$(mktemp -p "$BUN_BIN_DIR" ".bun-termux-manager.XXXXXX")
+    _cleanup_files+=("$temp_manager")
+    cp "$script_path" "$temp_manager" || die "Failed to copy manager"
+    chmod +x "$temp_manager" || die "Failed to make manager executable"
+    mv -f "$temp_manager" "$BUN_BIN_DIR/bun-termux-manager" || die "Failed to install manager"
+
+    ln -sf "$BUN_BIN_DIR/bun-termux-manager" "$BUN_BIN_DIR/btm" || die "Failed to symlink btm"
+
+    success "Installed manager as $BUN_BIN_DIR/btm"
+}
+
+# =============================================================================
+# Shell Integration
+# =============================================================================
+
+setup_shell_integration() {
+    section "Shell Integration"
+
+    local shell_name; shell_name=$(basename "${SHELL:-unknown}")
+
+    local config_file="" added=false refresh_command="" bun_install_value
+    if [[ "$BUN_INSTALL" == "$HOME"/* ]]; then
+        bun_install_value="\$HOME${BUN_INSTALL#$HOME}"
+    else
+        bun_install_value="$BUN_INSTALL"
+    fi
+
+    case "$shell_name" in
+        bash|zsh)
+            if [[ "$shell_name" == "bash" ]]; then
+                config_file="$HOME/.bashrc"
+                refresh_command="source ~/.bashrc"
+            else
+                config_file="$HOME/.zshrc"
+                refresh_command="exec $SHELL"
+            fi
+            [[ -f "$config_file" ]] || touch "$config_file"
+        
+            if [[ -w "$config_file" ]] && ! grep -q "BUN_INSTALL=" "$config_file" 2>/dev/null; then
+                {
+                    echo; echo "# bun"
+                    echo "export BUN_INSTALL=\"$bun_install_value\""
+                    echo 'export PATH="$BUN_INSTALL/bin:$PATH"'
+                } >> "$config_file"
+                success "Added bun to PATH in ~/${config_file##*/}"
+                added=true
+            fi
+            ;;
+
+        fish)
+            config_file="$HOME/.config/fish/config.fish"
+            if [[ ! -f "$config_file" ]]; then
+                mkdir -p "$(dirname "$config_file")" && touch "$config_file"
+            fi
+
+            if [[ -w "$config_file" ]] && ! grep -q "BUN_INSTALL" "$config_file" 2>/dev/null; then
+                {
+                    echo; echo "# bun"
+                    echo "set -gx BUN_INSTALL \"$bun_install_value\""
+                    echo 'set -gx PATH $BUN_INSTALL/bin $PATH'
+                } >> "$config_file"
+                success "Added bun to PATH in fish config"
+                added=true
+                refresh_command="source $config_file"
+            fi
+            ;;
+
+        *)
+            warn "Unknown shell: $shell_name"
+            info "Please manually add to your shell config:"
+            info "  export BUN_INSTALL=\"$bun_install_value\""
+            info '  export PATH="$BUN_INSTALL/bin:$PATH"'
+            return
+            ;;
+    esac
+
+    if [[ "$added" == false ]]; then
+        if [[ -f "$config_file" ]]; then
+            info "Shell config already configured or not writable"; return
+        else
+            warn "Could not create config file: $config_file"; return
+        fi
+    fi
+
+    if [[ -n "$refresh_command" ]]; then
+        echo
+        info "To get started, run:"
+        echo
+        info_bold "  $refresh_command"
+    fi
+}
+
+# =============================================================================
+# Source/Repo Management
+# =============================================================================
+
+BUN_TERMUX_REPO="https://github.com/Happ1ness-dev/bun-termux.git"
+
+clone_bun_termux() {
+    local clone_dir="${1:-$HOME/bun-termux}"
+    clone_dir="${clone_dir/#\~/$HOME}"
+    {
+        section "Cloning bun-termux repository"
+    
+        if [[ -d "$clone_dir" ]]; then
+            info "Directory $clone_dir exists, checking for updates..."
+            (cd "$clone_dir" && git pull --ff-only) || warn "Failed to update repo (local changes?). Using existing files."
+        else
+            msg "Cloning to $clone_dir..."
+            git clone --depth 1 "$BUN_TERMUX_REPO" "$clone_dir" || die "Failed to clone repository"
+        fi
+    
+        if [[ ! -f "$clone_dir/Makefile" ]] || [[ ! -f "$clone_dir/bun-termux.c" ]]; then
+            die "Cloned repo doesn't contain required source files"
+        fi
+    
+        success "Source ready at $clone_dir"
+    } >&2
+    echo "$clone_dir"
+}
+
+# Resolve source directory for building wrapper
+# Priority: 1) explicit hint, 2) script's parent (repo mode), 3) clone from GitHub
+resolve_source_dir() {
+    local dir candidates=("$1" "$BTM_SOURCE_DIR" "${SCRIPT_PATH%/*}/..")
+    for dir in "${candidates[@]}"; do
+        [[ -f "$dir/Makefile" && -f "$dir/bun-termux.c" ]] && { echo "$dir"; return 0; }
+    done
+    clone_bun_termux "${1:-$BTM_SOURCE_DIR}"
+}
+
+# =============================================================================
+# Main Commands
+# =============================================================================
+
+btm_add_cmd "install" "Full installation (skips Bun if already installed)
+
+Usage: btm install [options]
+
+Options:
+  --bun-version V    Install specific Bun version (default: latest)
+  --source DIR       Use local source (fallback: clone from GitHub)
+  --skip-bun         Skip Bun installation
+  --skip-wrapper     Skip wrapper installation
+  -h, --help         Show this help
+
+Examples:
+  btm install
+  btm install --source . --bun-version 1.0.0"
+
+cmd_install() {
+    help_check "$@" && exit 0
+    local bun_version="" source_dir="" skip_bun=false skip_wrapper=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --bun-version) bun_version=$(require_arg "$1" "${2:-}"); shift 2 ;;
+            --source) source_dir=$(require_arg "$1" "${2:-}"); shift 2 ;;
+            --skip-bun) skip_bun=true; shift ;;
+            --skip-wrapper) skip_wrapper=true; shift ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+
+    check_prerequisites
+    ensure_directories
+
+    if [[ "$skip_wrapper" == false ]]; then
+        source_dir=$(resolve_source_dir "$source_dir")
+        info "Using source directory: $source_dir"
+    fi
+
+    if [[ "$skip_bun" == false ]]; then
+        if [[ -f "$BUN_BIN_DIR/buno" ]] && [[ "$bun_version" == "" ]]; then
+            msg "Bun already installed as buno"
+            info "Run 'btm update bun' to update, or use --bun-version to force reinstall"
+        else
+            install_bun_official "${bun_version:-latest}"
+        fi
+    fi
+
+    if [[ "$skip_wrapper" == false ]]; then
+        build_from_source "$source_dir"
+        install_wrapper_components "$source_dir"
+        
+        if [[ "$source_dir" == "$HOME/bun-termux" ]] && [[ -d "$source_dir/.git" ]]; then
+            echo; info "Source repo kept at $source_dir (delete with: rm -rf $source_dir)"
+        fi
+    fi
+
+    setup_shell_integration
+
+    section "Installation Complete"
+    
+    local incomplete_hint="Maybe try 'curl -fsSL \"https://raw.githubusercontent.com/Happ1ness-dev/bun-termux/main/helper_scripts/bun-termux-manager\" | bash -s install --bun-version latest'?"
+    [[ "$skip_bun" == true || "$skip_wrapper" == true ]] || incomplete_hint=""
+
+    echo "Bun version:"
+    "$BUN_BIN_DIR/bun" --version || die "Installation verification failed. $incomplete_hint"
+    echo
+    success "Bun-Termux is ready to use!"
+    echo
+    echo "Quick test:"
+    echo "  bun --version"
+    echo "  bun --bun x cowsay hello"
+    echo
+    echo "For native modules, you may need:"
+    echo "  BUN_OPTIONS='--os=android' bun install"
+}
+
+_update_bun() {
+    command_exists "curl" || die "curl is required but missing"
+    command_exists "unzip" || die "unzip is required but missing"
+    command_exists "grun" || die "grun is required but missing"
+    local force="$1" check="$2"
+    if [[ "$check" == true ]]; then force=false; fi
+
+    section "Updating Bun"
+
+    local current latest current_stripped latest_stripped
+    current=$(get_installed_bun_version) || true
+    latest=$(get_latest_bun_version)
+    current_stripped=$(strip_version_prefix "$current")
+    latest_stripped=$(strip_version_prefix "$latest")
+
+    info "Current: $current_stripped"
+    info "Latest:  $latest_stripped"
+
+    if [[ "$current_stripped" =~ ^[0-9] ]] && [[ "$current_stripped" == "$latest_stripped" ]] && [[ "$force" == false ]]; then
+        success "Bun is already up to date"
+        return 0
+    fi
+
+    if [[ "$check" == true ]]; then
+        msg "Update available: $current_stripped --> $latest_stripped"
+        return 1
+    fi
+
+    install_bun_official "$latest"
+    success "Bun updated to $latest_stripped"
+}
+
+_update_wrapper() {
+    local source_dir="$1"
+
+    section "Updating wrapper"
+
+    source_dir=$(resolve_source_dir "$source_dir")
+
+    check_prerequisites
+    build_from_source "$source_dir"
+    install_wrapper_components "$source_dir"
+    success "Wrapper updated"
+}
+
+btm_add_cmd "update" "Update components (bun, wrapper, or all)
+
+Usage: btm update [bun|wrapper|all] [options]
+
+Arguments:
+  bun|wrapper|all    Component to update (default: all)
+
+Options:
+  --check            Check for updates only (bun only, exits 1 if available)
+  --force            Force update even if already latest
+  --source DIR       Use local source for wrapper update
+  -h, --help         Show this help"
+
+cmd_update() {
+    help_check "$@" && exit 0
+    local component="all" force=false source_dir="" check=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            bun|wrapper|all) component="$1"; shift ;;
+            --check) check=true; shift ;;
+            --force) force=true; shift ;;
+            --source) source_dir=$(require_arg "$1" "${2:-}"); shift 2 ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+    
+    ensure_directories
+
+    case "$component" in
+        bun)     _update_bun "$force" "$check" || exit $? ;;
+        wrapper) _update_wrapper "$source_dir" ;;
+        all)
+            if [[ "$check" == true ]]; then
+                warn "--check only checks for Bun updates (wrapper check not implemented)"
+                _update_bun "$force" "$check" || exit $?
+            else
+                _update_bun "$force" "$check"
+                _update_wrapper "$source_dir"
+            fi
+            ;;
+    esac
+}
+
+btm_add_cmd "uninstall" "Remove wrapper and restore original bun
+
+Usage: btm uninstall [options]
+
+Options:
+  --purge    Also remove \$BUN_INSTALL directory
+  -h, --help Show this help"
+
+cmd_uninstall() {
+    help_check "$@" && exit 0
+    local purge=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --purge) purge=true; shift ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+
+    section "Uninstalling Bun-Termux"
+
+    if [[ -f "$BUN_BIN_DIR/buno" ]]; then
+        mv -f "$BUN_BIN_DIR/buno" "$BUN_BIN_DIR/bun" || die "Failed to restore original bun"
+        success "Restored original bun binary"
+        info "Note: Run Bun with 'grun $BUN_BIN_DIR/bun' (the wrapper is no longer handling this)"
+    fi
+
+    if is_wrapper_binary "$BUN_BIN_DIR/bun"; then
+        warn "The restored 'bun' binary is a wrapper, removing it too."
+        rm -f "$BUN_BIN_DIR/bun"
+    fi
+
+    rm -f "$BUN_BIN_DIR/bunx" "$BUN_BIN_DIR/btm" "$BUN_BIN_DIR/bun-termux-manager" "$BUN_LIB_DIR/bun-shim.so"
+    success "Removed wrapper components"
+
+    if [[ "$purge" == true ]]; then
+        local resolved; resolved=$(realpath -m "$BUN_INSTALL" 2>/dev/null || echo "$BUN_INSTALL")
+        resolved="${resolved%/}"
+        case "$resolved" in
+            ""|/|/data|/data/data|/data/data/com.termux|/data/data/com.termux/files|"$HOME"|"$PREFIX"|"$PREFIX"/*)
+                die "Refusing to purge unsafe path: '$BUN_INSTALL'" ;;
+        esac
+
+        warn "This will delete $BUN_INSTALL and all its contents."
+        read -rp "Continue? [y/N] " confirm
+        [[ "$confirm" =~ ^[Yy]$ ]] || { msg "Aborted."; exit 0; }
+        
+        rm -rf "$BUN_INSTALL"
+        warn "Remember to remove Bun from your shell config:"
+        warn "  Remove 'export BUN_INSTALL=...' and PATH modification"
+        success "Purged all Bun data"
+    fi
+
+    success "Uninstall complete"
+
+    if [[ "$purge" == false ]] && is_bun_binary "$BUN_BIN_DIR/bun" ; then
+        echo
+        info "Original Bun is restored at $BUN_BIN_DIR/bun"
+        info "Run with --purge to remove everything"
+    fi
+}
+
+btm_add_cmd "status" "Show installation status"
+
+cmd_status() {
+    help_check "$@" && exit 0
+    section "Bun-Termux Status"
+    local healthy=true
+
+    _ok()   { printf "  ${GREEN}[+]${RESET} %-10s %s\n" "$1:" "$2"; }
+    _err()  { printf "  ${RED}[!]${RESET} %-10s %s\n" "$1:" "$2"; healthy=false; }
+    _warn() { printf "  ${YELLOW}[!]${RESET} %-10s %s\n" "$1:" "$2"; }
+
+    echo -e "${BOLD}Manager:${RESET}  v${BTM_VERSION} ($SCRIPT_PATH)"
+    echo -e "${BOLD}Install:${RESET}  $BUN_INSTALL"
+    echo
+    echo -e "${BOLD}Components:${RESET}"
+
+    local version=""
+    if version=$(get_installed_bun_version); then
+        _ok "buno" "$version"
+    else
+        _err "buno" "$version"
+    fi
+
+    if [[ -f "$BUN_BIN_DIR/bun" ]]; then
+        if is_wrapper_binary "$BUN_BIN_DIR/bun"; then
+            _ok "wrapper" "installed"
+        elif is_bun_binary "$BUN_BIN_DIR/bun"; then
+            _err "wrapper" "file is original bun (not wrapper!)"
+        else
+            _err "wrapper" "exists but unknown"
+        fi
+    else
+        _err "wrapper" "not installed"
+    fi
+
+    [[ -f "$BUN_LIB_DIR/bun-shim.so" ]] && _ok "shim" "installed" || _err "shim" "not installed"
+    [[ -f "$BUN_BIN_DIR/bunx" ]]         && _ok "bunx" "installed" || _err "bunx" "not installed"
+    [[ -f "$SCRIPT_PATH" ]]    && _ok "manager" "installed" || _warn "manager" "not in $BUN_BIN_DIR"
+
+    echo
+
+    [[ "$healthy" == true ]] || return 1
+    msg "Testing wrapper..."
+    if "$BUN_BIN_DIR/bun" --version &>/dev/null; then
+        success "Wrapper working correctly"
+    else
+        warn "Wrapper test failed"; healthy=false
+    fi
+
+    [[ "$healthy" == true ]]
+}
+
+btm_add_cmd "self-update" "Update btm itself
+
+Usage: btm self-update [options]
+
+Options:
+  --check    Check for updates only (exits 1 if available)
+  --force    Reinstall even if same version
+  -h, --help Show this help"
+
+cmd_self_update() {
+    help_check "$@" && exit 0
+    local check=false force=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --check) check=true; shift ;;
+            --force) force=true; shift ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+
+    section "Self-Update"
+
+    local installed_path="$BUN_BIN_DIR/bun-termux-manager"
+    local current_path="$SCRIPT_PATH"
+
+    if [[ "$current_path" != "$installed_path" ]]; then
+        warn "Not running from installed location"
+        info "Current: $current_path"
+        info "Installed: $installed_path"
+        info "Use 'git pull' instead if running from repo"
+    fi
+
+    msg "Fetching latest version..."
+
+    local raw_url="https://raw.githubusercontent.com/Happ1ness-dev/bun-termux/main/helper_scripts/bun-termux-manager"
+    local temp_script; temp_script=$(mktemp)
+    _cleanup_files+=("$temp_script")
+
+    if ! curl -fsSL "$raw_url" -o "$temp_script" 2>/dev/null; then
+        die "Failed to download latest version. Check your internet connection."
+    fi
+
+    if ! bash -n "$temp_script" 2>/dev/null; then
+        die "Downloaded script has syntax errors. Aborting."
+    fi
+
+    if ! grep -q 'BTM_VERSION' "$temp_script"; then
+        die "Downloaded file doesn't appear to be bun-termux-manager"
+    fi
+
+    local latest_version; latest_version=$(grep -m1 'readonly BTM_VERSION=' "$temp_script" 2>/dev/null | grep -o '"[^"]*"' | head -1 | tr -d '"')
+
+    if [[ -z "$latest_version" ]]; then
+        die "Could not determine latest version from downloaded script"
+    fi
+
+    info "Current version: $BTM_VERSION"
+    info "Latest version:  $latest_version"
+
+    if [[ "$check" == true ]]; then
+        if version_lt "$BTM_VERSION" "$latest_version"; then
+            msg "Update available: $BTM_VERSION --> $latest_version"
+            info "Run '$BTM_NAME self-update' to install"
+            return 1
+        else
+            success "You have the latest version"
+            return 0
+        fi
+    fi
+
+    if ! version_lt "$BTM_VERSION" "$latest_version" && [[ "$force" == false ]]; then
+        success "Already up to date (use --force to reinstall)"
+        return 0
+    fi
+
+    chmod +x "$temp_script" || die "Failed to make script executable"
+
+    if ! mv -f "$temp_script" "$installed_path"; then
+        die "Failed to install new version"
+    fi
+
+    success "Updated to version $latest_version"
+
+    ln -sf "$installed_path" "$BUN_BIN_DIR/btm" 2>/dev/null || true
+
+    info "Run 'btm version' to verify"
+}
+
+btm_add_cmd "version" "Show version info"
+
+cmd_version() {
+    help_check "$@" && exit 0
+    echo "$BTM_NAME version $BTM_VERSION"
+    echo
+    echo "Components:"
+    echo "  Manager:  $BTM_VERSION"
+    echo "  Bun:      $(get_installed_bun_version)"
+    if is_wrapper_binary "$BUN_BIN_DIR/bun" ; then
+        echo "  Wrapper:  installed"
+    else
+        echo "  Wrapper:  not installed"
+    fi
+    echo "  Target:   linux-aarch64"
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+main() {
+    local cmd="${1:-help}"
+    shift || true
+
+    case "$cmd" in
+        help|-h|--help)
+            show_help "${1:-}"
+            ;;
+
+        version|-v|--version)
+            cmd_version "$@"
+            ;;
+
+        install|update|uninstall|remove|status|self-update)
+            check_termux
+            case "$cmd" in
+                install)          cmd_install "$@" ;;
+                update)           cmd_update "$@" ;;
+                uninstall|remove) cmd_uninstall "$@" ;;
+                status)           cmd_status "$@" || exit $? ;;
+                self-update)      cmd_self_update "$@" || exit $? ;;
+            esac
+            ;;
+
+        *)
+            die "Unknown command: $cmd. Run '$BTM_NAME help' for usage."
+            ;;
+    esac
+}
+
+main "$@"
