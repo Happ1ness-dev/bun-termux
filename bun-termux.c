@@ -20,7 +20,7 @@
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <unistd.h>  /* syscall() provided by glibc with _GNU_SOURCE */
+#include <unistd.h>  /* syscall() requires _GNU_SOURCE */
 #include <limits.h>
 #include <errno.h>
 
