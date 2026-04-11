@@ -7,9 +7,7 @@
 #define _GNU_SOURCE
 #include <elf.h>
 
-#ifndef SYS_getrandom
-#define SYS_getrandom 278
-#endif
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -20,7 +18,7 @@
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <unistd.h>  /* syscall() requires _GNU_SOURCE */
+#include <unistd.h>
 #include <limits.h>
 #include <errno.h>
 
