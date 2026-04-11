@@ -26,9 +26,7 @@
 
 #define LD_SO     "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1"
 #define GLIBC_LIB "/data/data/com.termux/files/usr/glibc/lib"
-#define MAX_ARGS  256
-#define MAX_ENV   512
-#define RESERVED_ENV_SLOTS 3  /* Space for orig_preload, orig_libpath, fake_root */
+#define MAX_ENV_INJECTIONS 8  /* Current: 5, headroom: 3 */
 #define STACK_AUXV_RESERVE 256
 
 static void die(const char *msg) {
@@ -265,12 +263,12 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
     sp -= 16; memcpy(sp, rnd, 16);
     size_t rnd_addr = (size_t)sp;
 
-    size_t argv_a[MAX_ARGS];
+    size_t argv_a[argc];
     for (size_t i = 0; i < argc; i++)
         argv_a[i] = PUSH_STR(argv[i]);
     size_t execfn = argc ? argv_a[0] : 0;
 
-    size_t envp_a[MAX_ENV];
+    size_t envp_a[envc];
     for (size_t i = 0; i < envc; i++)
         envp_a[i] = PUSH_STR(envp[i]);
 
@@ -328,8 +326,6 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
 }
 
 int main(int argc, char **argv, char **envp) {
-    if (argc >= MAX_ARGS) 
-        die("too many arguments");
     
     const char *bun_install = getenv("BUN_INSTALL");
     const char *bun_binary = getenv("BUN_BINARY_PATH");
@@ -383,32 +379,38 @@ have_shim:
     
     ensure_dir(fake_root);
     
-    const char *new_argv[MAX_ARGS];
+    const char *prefix_args[] = {
+        ld_so, "--preload", shim_path, "--library-path", glibc_lib, bun_path
+    };
+    size_t n_prefix = sizeof(prefix_args) / sizeof(prefix_args[0]);
+    
+    const char **new_argv = malloc((n_prefix + argc) * sizeof(char *));
+    if (!new_argv) die("out of memory");
+    
     size_t na = 0;
+    for (size_t i = 0; i < n_prefix; i++) new_argv[na++] = prefix_args[i];
+    for (int i = 1; i < argc; i++) new_argv[na++] = argv[i];
+    new_argv[na] = NULL;
     
-    new_argv[na++] = ld_so;
-    new_argv[na++] = "--preload";
-    new_argv[na++] = shim_path;
-    new_argv[na++] = "--library-path";
-    new_argv[na++] = glibc_lib;
-    new_argv[na++] = bun_path;
+    size_t env_count = 0;
+    while (envp[env_count]) env_count++;
     
-    for (int i = 1; i < argc && na < MAX_ARGS - 1; i++) {
-        new_argv[na++] = argv[i];
-    }
-
-    const char *new_envp[MAX_ENV];
-    size_t ne = filter_envp(envp, new_envp, MAX_ENV - RESERVED_ENV_SLOTS);
-
-    if (has_orig_preload)
-        new_envp[ne++] = orig_preload;
-    if (has_orig_libpath)
-        new_envp[ne++] = orig_libpath;
+    const char *inject_envs[MAX_ENV_INJECTIONS];
+    size_t n_inject = 0;
+    
+    #define ADD_INJECTION(ptr) do { \
+        if (n_inject >= MAX_ENV_INJECTIONS) \
+            die("bug: too many env injections, increase MAX_ENV_INJECTIONS"); \
+        inject_envs[n_inject++] = (ptr); \
+    } while(0)
+    
+    if (has_orig_preload) ADD_INJECTION(orig_preload);
+    if (has_orig_libpath) ADD_INJECTION(orig_libpath);
 
     static char fake_root_env[PATH_MAX + 20];
     if (!getenv("BUN_FAKE_ROOT")) {
         path_build(fake_root_env, sizeof(fake_root_env), "BUN_FAKE_ROOT=%s", fake_root);
-        new_envp[ne++] = fake_root_env;
+        ADD_INJECTION(fake_root_env);
     }
 
     static char wrapper_env[PATH_MAX + 32];
@@ -418,10 +420,19 @@ have_shim:
     if (self_len > 0) {
         self_path[self_len] = '\0';
         snprintf(wrapper_env, sizeof(wrapper_env), "BUN_TERMUX_WRAPPER=%s", self_path);
-        new_envp[ne++] = wrapper_env;
+        ADD_INJECTION(wrapper_env);
     }
     snprintf(target_env, sizeof(target_env), "BUN_TERMUX_TARGET=%s", bun_path);
-    new_envp[ne++] = target_env;
+    ADD_INJECTION(target_env);
+    
+    #undef ADD_INJECTION
+    
+    const char **new_envp = malloc((env_count + n_inject + 1) * sizeof(char *));
+    if (!new_envp) die("out of memory");
+    
+    size_t ne = filter_envp(envp, new_envp, env_count);
+    for (size_t i = 0; i < n_inject; i++) new_envp[ne++] = inject_envs[i];
+    new_envp[ne] = NULL;
 
     userland_exec(ld_so, new_argv, na, new_envp, ne);
 }
