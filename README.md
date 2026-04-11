@@ -95,7 +95,7 @@ See [docs/README.md](docs/README.md#environment-variables) for all variables and
 
 ## Limitations
 
-1. aarch64 only, because of hardcoded assembly and syscalls. Maybe I'll add support for other architectures in the future.
+1. aarch64 only, because of hardcoded assembly in userland exec. Maybe I'll add support for other architectures in the future.
 2. Binaries built with `bun build --compile` have wrapper embedded, requiring `buno`, `bun-shim.so` and glibc to be present on the system where they run.
 3. Bun install/add/update/remove commands might require `BUN_OPTIONS="--os=android"` env var if they install native modules.
 4. If bun somehow fails to walk the current path due to permission error, it'll fail to get the current env vars too. I'll have to investigate why.
