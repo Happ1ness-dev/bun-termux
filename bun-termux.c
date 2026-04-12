@@ -393,6 +393,11 @@ have_shim:
     size_t env_count = 0;
     while (envp[env_count]) env_count++;
     
+    const char **new_envp = malloc((env_count + MAX_ENV_INJECTIONS + 1) * sizeof(char *));
+    if (!new_envp) die("out of memory");
+    
+    size_t ne = filter_envp(envp, new_envp, env_count);
+    
     const char *inject_envs[MAX_ENV_INJECTIONS];
     size_t n_inject = 0;
     
@@ -425,10 +430,6 @@ have_shim:
     
     #undef ADD_INJECTION
     
-    const char **new_envp = malloc((env_count + n_inject + 1) * sizeof(char *));
-    if (!new_envp) die("out of memory");
-    
-    size_t ne = filter_envp(envp, new_envp, env_count);
     for (size_t i = 0; i < n_inject; i++) new_envp[ne++] = inject_envs[i];
     new_envp[ne] = NULL;
 
