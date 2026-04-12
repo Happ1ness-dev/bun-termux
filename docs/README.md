@@ -63,7 +63,7 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 
 ## How It Works
 
-1. Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-linux-aarch64.so.1`) without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the linker like when using grun), making compiled binaries work out of the box.
+1. Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-linux-<arch>.so.X`) without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the linker like when using grun), making compiled binaries work out of the box.
 2. Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
 3. Wrapper backs up original LD_PRELOAD and LD_LIBRARY_PATH to BUN_TERMUX_ORIG_LD_PRELOAD and BUN_TERMUX_ORIG_LD_LIBRARY_PATH.
 4. `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
@@ -85,14 +85,14 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 | `PREFIX` | `/data/data/com.termux/files/usr` | Runtime | Termux installation prefix; used by shim for shebang path translation |
 | `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Runtime | Temporary directory for shim (fallback if `BUN_FAKE_ROOT` is unset) |
 | `GLIBC_ROOT` | `/data/data/com.termux/files/usr/glibc` | Build | Build-time override for glibc installation path (Makefile only) |
-| `GLIBC_LD_SO` | `/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1` | Both | Path to glibc's dynamic linker |
+| `GLIBC_LD_SO` | `/data/data/com.termux/files/usr/glibc/lib/ld-linux-<arch>.so.X` | Both | Path to glibc's dynamic linker |
 | `GLIBC_LIB` | `/data/data/com.termux/files/usr/glibc/lib` | Both | Directory containing glibc shared libraries |
 
 Scope: `Runtime` = read by wrapper/shim at runtime, `Build` = used by Makefile only, `Both` = used by both Makefile and runtime
 
 ## Limitations
 
-1. aarch64 only, because of hardcoded assembly in userland exec. Maybe I'll add support for other architectures in the future.
+1. x86_64 support is experimental. Any feedback from x64 Android users is welcome.
 2. Binaries built with `bun build --compile` have wrapper embedded, requiring `buno`, `bun-shim.so` and glibc to be present on the system where they run.
 3. Bun install/add/update/remove commands might require `BUN_OPTIONS="--os=android"` env var if they install native modules.
 4. If bun somehow fails to walk the current path due to permission error, it'll fail to get the current env vars too. I'll have to investigate why.
