@@ -265,6 +265,9 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
 
     size_t plat_addr = PUSH_STR(ARCH_NAME);
 
+    /* AT_BASE_PLATFORM - "real" hardware name, same as platform for most */
+    size_t base_plat_addr = PUSH_STR(ARCH_NAME);
+
     uint8_t rnd[16];
     ssize_t got = 0;
     while (got < 16) {
@@ -304,6 +307,20 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
         { AT_SYSINFO_EHDR, getauxval(AT_SYSINFO_EHDR) },
         { AT_EXECFN, execfn },
         { AT_PLATFORM, plat_addr },
+        { AT_BASE_PLATFORM, base_plat_addr },
+#ifdef AT_MINSIGSTKSZ
+        { AT_MINSIGSTKSZ, getauxval(AT_MINSIGSTKSZ) },
+#endif
+#ifdef AT_RSEQ_FEATURE_SIZE
+        { AT_RSEQ_FEATURE_SIZE, getauxval(AT_RSEQ_FEATURE_SIZE) },
+        { AT_RSEQ_ALIGN, getauxval(AT_RSEQ_ALIGN) },
+#endif
+#ifdef AT_HWCAP3
+        { AT_HWCAP3, getauxval(AT_HWCAP3) },
+#endif
+#ifdef AT_HWCAP4
+        { AT_HWCAP4, getauxval(AT_HWCAP4) },
+#endif
         { AT_NULL, 0 },
     };
     size_t auxc = sizeof(auxv) / sizeof(auxv[0]);
