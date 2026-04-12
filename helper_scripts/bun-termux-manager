@@ -76,6 +76,18 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+# Get Bun release target name based on architecture
+# Returns: linux-aarch64, linux-x64, or linux-x64-baseline
+# Returns 1 if architecture is unsupported
+get_bun_target() {
+    case "$(uname -m)" in
+        aarch64|arm64) echo "linux-aarch64" ;;
+        x86_64|amd64)
+            grep -q avx2 /proc/cpuinfo 2>/dev/null && echo "linux-x64" || echo "linux-x64-baseline" ;;
+        *) return 1 ;;
+    esac
+}
+
 require_arg() {
     [[ -n "${2:-}" ]] || die "Option $1 requires a value"
     echo "$2"
@@ -134,9 +146,10 @@ check_termux() {
     fi
 
     local arch; arch=$(uname -m)
-    if [[ "$arch" != "aarch64" && "$arch" != "arm64" ]]; then
-        die "Only aarch64 architecture is supported (detected: $arch)"
-    fi
+    case "$arch" in
+        aarch64|arm64|x86_64|amd64) ;;
+        *) die "Unsupported architecture: $arch" ;;
+    esac
 }
 
 # Returns 0 if $1 < $2 ($1 is older than $2)
@@ -201,8 +214,8 @@ check_prerequisites() {
         pkg install -y glibc-runner || die "Failed to install glibc-runner"
     fi
 
-    if [[ ! -f "$GLIBC_ROOT/lib/ld-linux-aarch64.so.1" ]]; then
-        die "glibc dynamic linker not found at $GLIBC_ROOT/lib/ld-linux-aarch64.so.1"
+    if ! ls "$GLIBC_ROOT"/lib/ld-linux-*.so.* &>/dev/null; then
+        die "glibc dynamic linker not found in $GLIBC_ROOT/lib/"
     fi
 
     command_exists "grun" || die "grun command not found after glibc installation"
@@ -253,7 +266,8 @@ install_bun_official() {
     local input_version="${1:-latest}"
     section "Installing Bun (as buno)"
 
-    local target="linux-aarch64" download_url version display_version
+    local target download_url version display_version
+    target=$(get_bun_target) || die "Unsupported architecture for Bun: $(uname -m)"
 
     if [[ "$input_version" == "latest" ]]; then
         version=$(get_latest_bun_version)
@@ -892,7 +906,7 @@ cmd_version() {
     else
         echo "  Wrapper:  not installed"
     fi
-    echo "  Target:   linux-aarch64"
+    echo "  Target:   $(get_bun_target 2>/dev/null || echo "unsupported-$(uname -m)")"
 }
 
 # =============================================================================
