@@ -1,6 +1,30 @@
 # Simple Bun Termux Wrapper Makefile
 # Builds shim and installs it with a lightweight wrapper
 
+# Architecture detection
+HOST_ARCH := $(shell uname -m)
+ifeq ($(HOST_ARCH),aarch64)
+    TARGET_ARCH := aarch64
+else ifeq ($(HOST_ARCH),x86_64)
+    TARGET_ARCH := x86_64
+else
+    $(error Unsupported architecture: $(HOST_ARCH))
+endif
+
+# Architecture-specific settings
+ifeq ($(TARGET_ARCH),aarch64)
+    LD_SO_NAME = ld-linux-aarch64.so.1
+else ifeq ($(TARGET_ARCH),x86_64)
+    LD_SO_NAME = ld-linux-x86-64.so.2
+endif
+
+# Compiler configuration
+# Wrapper: native Android binary (runs in Termux environment)
+WRAPPER_CC = clang --target=$(TARGET_ARCH)-linux-android
+
+# Shim and tests: glibc Linux binaries (run under glibc loader, not Android libc)
+SHIM_CC = clang --target=$(TARGET_ARCH)-linux-gnu
+
 BUN_PREFIX := $(if $(BUN_INSTALL),$(BUN_INSTALL),$(HOME)/.bun)
 
 BUN_BIN_DIR = $(BUN_PREFIX)/bin
@@ -10,12 +34,8 @@ BUN_TMP_DIR = $(BUN_PREFIX)/tmp
 CFLAGS = -Wall -Wextra -Werror=implicit-function-declaration \
          -Werror=format-security -O2
 
-SHIM_CC = clang --target=aarch64-linux-gnu
 SHIM_CFLAGS = $(CFLAGS) -shared -fPIC -nostdlib
-WRAPPER_CC = clang
 WRAPPER_CFLAGS = $(CFLAGS)
-TEST_CC = clang
-TEST_CFLAGS = $(CFLAGS)
 
 # Paths (GLIBC_ROOT can be overridden via env or make arg)
 GLIBC_ROOT ?= /data/data/com.termux/files/usr/glibc
@@ -38,7 +58,7 @@ bun-shim.so: shim.c
 		-l:libc.so.6 -l:libdl.so.2
 
 bun-termux: bun-termux.c
-	@echo "Building wrapper..."
+	@echo "Building wrapper for $(TARGET_ARCH)..."
 	$(WRAPPER_CC) $(WRAPPER_CFLAGS) -o $@ $<
 
 install: bun-termux bun-shim.so
@@ -88,8 +108,8 @@ test-compile-full: test-setup
 
 test-proc-self-exe: $(TEST_DIR)/test-proc-self-exe.c
 	@echo "Building /proc/self/exe test..."
-	@clang --target=aarch64-linux-gnu -c $(CFLAGS) -I$(GLIBC_INC) -o $(TEST_DIR)/test-proc-self-exe.o $(TEST_DIR)/test-proc-self-exe.c
-	@env LD_PRELOAD= $(GLIBC_ROOT)/bin/ld.bfd -dynamic-linker $(GLIBC_LIB)/ld-linux-aarch64.so.1 \
+	@$(SHIM_CC) -c $(CFLAGS) -I$(GLIBC_INC) -o $(TEST_DIR)/test-proc-self-exe.o $(TEST_DIR)/test-proc-self-exe.c
+	@env LD_PRELOAD= $(GLIBC_ROOT)/bin/ld.bfd -dynamic-linker $(GLIBC_LIB)/$(LD_SO_NAME) \
 		-o $(TEST_DIR)/test-proc-self-exe \
 		$(GLIBC_LIB)/crt1.o $(GLIBC_LIB)/crti.o \
 		$(TEST_DIR)/test-proc-self-exe.o \
@@ -100,18 +120,18 @@ test-proc-self-exe: $(TEST_DIR)/test-proc-self-exe.c
 # Native module test targets
 $(NATIVE_DIR)/lib/simple.so: $(NATIVE_DIR)/lib/simple.c
 	@echo "Building native .so library..."
-	@clang --target=aarch64-linux-gnu -shared -fPIC -nostdlib \
+	@$(SHIM_CC) -shared -fPIC -nostdlib \
 		-I$(GLIBC_INC) -L$(GLIBC_LIB) \
 		-Wl,-rpath,$(GLIBC_LIB) -Wl,-rpath-link,$(GLIBC_LIB) \
 		-o $@ $< -l:libc.so.6
 
 $(NATIVE_DIR)/addon/simple.node: $(NATIVE_DIR)/addon/simple.c
 	@echo "Building native .node addon..."
-	@clang --target=aarch64-linux-gnu -c -fPIC \
+	@$(SHIM_CC) -c -fPIC \
 		-I$(GLIBC_INC) -I$(NODE_INCLUDE) \
 		-o $(NATIVE_DIR)/addon/simple.o $<
 	@env LD_PRELOAD= $(GLIBC_ROOT)/bin/ld.bfd -shared \
-		-dynamic-linker $(GLIBC_LIB)/ld-linux-aarch64.so.1 \
+		-dynamic-linker $(GLIBC_LIB)/$(LD_SO_NAME) \
 		-o $@ $(NATIVE_DIR)/addon/simple.o -L$(GLIBC_LIB) -l:libc.so.6
 	@rm -f $(NATIVE_DIR)/addon/simple.o
 

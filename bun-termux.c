@@ -5,6 +5,20 @@
  */
 
 #define _GNU_SOURCE
+
+/* Architecture detection */
+#if defined(__aarch64__)
+    #define ARCH_AARCH64 1
+    #define ARCH_NAME "aarch64"
+    #define LD_SO_NAME "ld-linux-aarch64.so.1"
+#elif defined(__x86_64__) || defined(__amd64__)
+    #define ARCH_X86_64 1
+    #define ARCH_NAME "x86_64"
+    #define LD_SO_NAME "ld-linux-x86-64.so.2"
+#else
+    #error "Unsupported architecture"
+#endif
+
 #include <elf.h>
 
 #include <sys/syscall.h>
@@ -22,7 +36,7 @@
 #include <limits.h>
 #include <errno.h>
 
-#define LD_SO     "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1"
+#define LD_SO     "/data/data/com.termux/files/usr/glibc/lib/" LD_SO_NAME
 #define GLIBC_LIB "/data/data/com.termux/files/usr/glibc/lib"
 #define MAX_ENV_INJECTIONS 8  /* Current: 5, headroom: 3 */
 #define STACK_AUXV_RESERVE 256
@@ -249,7 +263,7 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
         sp -= _l; memcpy(sp, s, _l); (size_t)sp; })
     #define PUSH_VAL(v) do { size_t _v = (v); sp -= 8; memcpy(sp, &_v, 8); } while(0)
 
-    size_t plat_addr = PUSH_STR("aarch64");
+    size_t plat_addr = PUSH_STR(ARCH_NAME);
 
     uint8_t rnd[16];
     ssize_t got = 0;
@@ -306,20 +320,34 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
     *w++ = 0;
     for (size_t i = 0; i < auxc; i++) { *w++ = auxv[i][0]; *w++ = auxv[i][1]; }
 
+/* Jump to ld.so entry point.
+ *
+ * We don't zero registers (unlike the kernel's ELF_PLAT_INIT) because
+ * ld.so immediately overwrites them anyway:
+ *   - AArch64: sets x0=sp, then x0=&_dl_fini before jumping to user
+ *   - x86_64: moves rsp->rdi, sets rdx=&_dl_fini before jumping
+ *
+ * Sources:
+ *   glibc: sysdeps/aarch64/dl-start.S, sysdeps/x86_64/dl-machine.h
+ *   kernel: arch/arm64/include/asm/elf.h, arch/x86/include/asm/elf.h
+ */
+#if ARCH_AARCH64
     __asm__ volatile(
         "mov sp, %[sp]\n"
-        "mov x0, sp\n"
-        "mov x1, xzr\n"
-        "mov x2, xzr\n"
-        "mov x3, xzr\n"
-        "mov x4, xzr\n"
-        "mov x5, xzr\n"
-        "mov x30, xzr\n"
         "br  %[entry]\n"
         :
         : [sp] "r"((size_t)sp), [entry] "r"(elf.entry)
-        : "x0","x1","x2","x3","x4","x5","x6","x7","x30","memory"
+        : "memory"
     );
+#elif ARCH_X86_64
+    __asm__ volatile(
+        "mov %[sp], %%rsp\n\t"
+        "jmp *%[entry]"
+        :
+        : [sp] "r"((size_t)sp), [entry] "r"(elf.entry)
+        : "memory"
+    );
+#endif
     __builtin_unreachable();
 }
 
@@ -332,7 +360,7 @@ int main(int argc, char **argv, char **envp) {
     
     const char *ld_so = resolve_glibc_path(ld_path, sizeof(ld_path),
                                            getenv("GLIBC_LD_SO"), prefix,
-                                           "/glibc/lib/ld-linux-aarch64.so.1", LD_SO);
+                                           "/glibc/lib/" LD_SO_NAME, LD_SO);
     
     const char *glibc_lib = resolve_glibc_path(lib_path, sizeof(lib_path),
                                                getenv("GLIBC_LIB"), prefix,
