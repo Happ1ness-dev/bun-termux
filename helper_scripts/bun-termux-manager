@@ -6,7 +6,7 @@ set -euo pipefail
 # Installer and manager for bun-termux - a wrapper that makes Bun run on Termux
 # =============================================================================
 
-readonly BTM_VERSION="1.0.0"
+readonly BTM_VERSION="1.0.1"
 if [[ -t 0 ]] && [[ "${BASH_SOURCE[0]}" != */fd/[0-9]* ]]; then
     readonly BTM_NAME=$(basename "${BASH_SOURCE[0]}")
     readonly SCRIPT_PATH=$(realpath "${BASH_SOURCE[0]}")
