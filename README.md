@@ -103,6 +103,8 @@ Intercepts system calls to work around Android restrictions:
 - Redirects shebang paths (e.g. `/usr/bin/env`) → Termux prefix
 - Fakes `/proc/stat` → makes `os.cpus()` work
 - Stubs hardlinking → makes `bun install` work
+- Redirects bun's hardcoded `/tmp/bun-node*` to `$TMPDIR` and bun symlinks to wrapper → makes `--bun` arg work
+- Redirects some dns-related `/etc` paths to `$PREFIX/etc` → makes `dns.lookup()` work
 
 See [docs/README.md](docs/README.md#how-it-works) for the full technical breakdown.
 
