@@ -67,6 +67,29 @@ cowsay "bun-termux works!"
 ln -s $HOME/.bun/bin/bun $HOME/.bun/bin/node
 ```
 
+## Manager
+
+If you've installed bun-termux-manager, you can easily manage Bun versions.
+> Run `btm help` to see all available commands
+
+### Updating
+
+```bash
+btm update [bun|wrapper|all]
+```
+
+- `bun` - Just update Bun
+- `wrapper` - Just update wrapper
+- `all` - Update everything (Default)
+
+You can also add `--check` to check for updates.
+
+### Changing Bun Version
+
+```bash
+btm install --bun-version VERSION # e.g. 1.0.0
+```
+
 ## How It Works
 
 Bun is built for glibc, not Android's bionic libc, and needs access to paths that Android restricts. bun-termux solves this with two components:
