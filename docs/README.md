@@ -73,6 +73,8 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 8. Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
 9. Shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
 10. Shim stubs `linkat()` and returns `EXDEV` (`error.NotSameFileSystem`), which forces bun to fall back to copyfile when installing packages.
+11. Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to the original binary, the shim rewrites the target to point to the wrapper instead, making `bun --bun` work.
+12. Shim intercepts `fopen()` and `fopen64()` on `/etc/resolv.conf`, `/etc/nsswitch.conf`, and `/etc/hosts`, redirecting them to `$PREFIX/etc/`. This allows bun's c-ares DNS resolver to find the correct configuration files on Android.
 
 ## Environment Variables
 
