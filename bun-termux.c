@@ -38,8 +38,14 @@
 
 #define LD_SO     "/data/data/com.termux/files/usr/glibc/lib/" LD_SO_NAME
 #define GLIBC_LIB "/data/data/com.termux/files/usr/glibc/lib"
-#define MAX_ENV_INJECTIONS 8  /* Current: 5, headroom: 3 */
+#define MAX_ENV_INJECTIONS 8  /* Current: 6, headroom: 2 */
 #define STACK_AUXV_RESERVE 256
+
+/* Bun 1.3.12+ requires a .bun section for --compile */
+typedef struct { uint64_t size; } BunCompiledHeader;
+#define BUN_COMPILED_ALIGNMENT (16 * 1024)
+__attribute__((section(".bun"), aligned(BUN_COMPILED_ALIGNMENT), used))
+static BunCompiledHeader BUN_COMPILED = { 0 };
 
 static void die(const char *msg) {
     fprintf(stderr, "bun-termux: %s: %s\n", msg, strerror(errno));
@@ -239,6 +245,80 @@ static elf_info_t load_elf(int fd, size_t ps) {
     munmap(fdata, st.st_size);
     close(fd);
     return info;
+}
+
+typedef struct {
+    uint64_t sh_addr;
+    uint64_t sh_offset;
+    uint64_t sh_size;
+} bun_section_t;
+
+/* Find the .bun section in an ELF file. Returns 0 on success, -1 on failure. */
+static int find_bun_section(const char *path, bun_section_t *out) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+
+    struct stat st;
+    uint8_t *data = NULL;
+    int ret = -1;
+
+    if (fstat(fd, &st) < 0) goto out;
+    data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (data == MAP_FAILED) { data = NULL; goto out; }
+
+    if ((size_t)st.st_size < sizeof(Elf64_Ehdr) ||
+        memcmp(data, ELFMAG, SELFMAG) != 0 ||
+        data[EI_CLASS] != ELFCLASS64)
+        goto out;
+
+    const Elf64_Ehdr *eh = (const Elf64_Ehdr *)data;
+    uint16_t shnum = eh->e_shnum;
+    uint64_t shoff = eh->e_shoff;
+    uint16_t shstrndx = eh->e_shstrndx;
+    uint16_t shentsize = eh->e_shentsize;
+
+    uint64_t file_size = (uint64_t)st.st_size;
+    if (shnum == 0 || shstrndx >= shnum) goto out;
+    if (shoff > file_size || (uint64_t)shnum * shentsize > file_size - shoff) goto out;
+
+    const Elf64_Shdr *shstr_shdr = (const Elf64_Shdr *)(data + shoff + (uint64_t)shstrndx * shentsize);
+    uint64_t strtab_off = shstr_shdr->sh_offset;
+    uint64_t strtab_size = shstr_shdr->sh_size;
+    if (strtab_off > file_size || strtab_size > file_size - strtab_off) goto out;
+
+    const char *strtab = (const char *)(data + strtab_off);
+    for (uint16_t i = 0; i < shnum; i++) {
+        const Elf64_Shdr *sh = (const Elf64_Shdr *)(data + shoff + (uint64_t)i * shentsize);
+        if (sh->sh_name >= strtab_size) continue;
+        if ((uint64_t)sh->sh_name + 5 <= strtab_size &&
+            memcmp(strtab + sh->sh_name, ".bun\0", 5) == 0) {
+            if (sh->sh_offset > file_size || sh->sh_size > file_size - sh->sh_offset) goto out;
+            out->sh_addr = sh->sh_addr;
+            out->sh_offset = sh->sh_offset;
+            out->sh_size = sh->sh_size;
+            ret = 0;
+            break;
+        }
+    }
+
+out:
+    if (data) munmap(data, st.st_size);
+    close(fd);
+    return ret;
+}
+
+/* Find the .bun section offset and total size in the wrapper's own ELF.
+ * Bun's writeBunSection sets sh_size = header_size + payload, so sh_size
+ * is the total bytes the shim needs to mmap.
+ * Returns 0 on success, -1 on failure.
+ */
+static int find_bun_payload_info(const char *path, uint64_t *file_offset, uint64_t *total_size) {
+    bun_section_t s;
+    if (find_bun_section(path, &s) < 0) return -1;
+    if (s.sh_size < sizeof(BunCompiledHeader)) return -1;
+    *file_offset = s.sh_offset;
+    *total_size = s.sh_size;
+    return 0;
 }
 
 __attribute__((noreturn))
@@ -472,7 +552,45 @@ have_shim:
     }
     snprintf(target_env, sizeof(target_env), "BUN_TERMUX_TARGET=%s", bun_path);
     ADD_INJECTION(target_env);
-    
+
+    /* Bun 1.3.12+ (commit 66f7c41412) switched Linux --compile to an ELF
+     * section approach: elf.zig appends the module graph, converts
+     * PT_GNU_STACK to PT_LOAD, and stores the payload vaddr in
+     * BUN_COMPILED.size. At runtime, StandaloneModuleGraph dereferences
+     * that vaddr directly.
+     *
+     * The wrapper runs as "bun", so --compile targets it, not buno.
+     * Buno's BUN_COMPILED.size stays 0, the wrapper's vaddr is only
+     * valid in the wrapper's address space.
+     *
+     * So we broker access: parse buno's ELF for its BUN_COMPILED runtime
+     * address, parse the wrapper's ELF for the .bun section file offset
+     * and total size, and let the shim mmap the .bun section from
+     * /proc/self/exe and patch buno's BUN_COMPILED.size.
+     *
+     * Sources:
+     *   src/elf.zig (writeBunSection)
+     *   src/StandaloneModuleGraph.zig (ELF.getData)
+     *   src/bun.js/bindings/c-bindings.cpp (BUN_COMPILED symbol)
+     */
+    static char compile_env[128];
+    if (BUN_COMPILED.size != 0) {
+        if (self_len <= 0) die("cannot read /proc/self/exe for compiled binary");
+        /* sh_addr == &BUN_COMPILED (the only symbol in .bun) */
+        bun_section_t bun_sec;
+        uint64_t target_vaddr = find_bun_section(bun_path, &bun_sec) == 0 ? bun_sec.sh_addr : 0;
+        uint64_t payload_offset, total_size;
+        if (target_vaddr != 0 &&
+            find_bun_payload_info(self_path, &payload_offset, &total_size) == 0) {
+            snprintf(compile_env, sizeof(compile_env),
+                     "BUN_TERMUX_COMPILED=%llx,%llx,%llx",
+                     (unsigned long long)target_vaddr,
+                     (unsigned long long)payload_offset,
+                     (unsigned long long)total_size);
+            ADD_INJECTION(compile_env);
+        }
+    }
+
     #undef ADD_INJECTION
     
     for (size_t i = 0; i < n_inject; i++) new_envp[ne++] = inject_envs[i];
