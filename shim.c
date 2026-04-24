@@ -3,7 +3,9 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <link.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -90,6 +92,8 @@ static const char *translate_etc(const char *path, char *buf, size_t bufsize) {
     return path;
 }
 
+static void patch_bun_compiled(void);
+
 __attribute__((constructor))
 static void init_shim(void) {
     const char *orig;
@@ -134,6 +138,55 @@ static void init_shim(void) {
         setenv("LD_LIBRARY_PATH", orig, 1);
         unsetenv("BUN_TERMUX_ORIG_LD_LIBRARY_PATH");
     }
+
+    patch_bun_compiled();
+}
+
+static int find_exe_base(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    if (info->dlpi_name[0] == '\0') {
+        *(uintptr_t *)data = info->dlpi_addr;
+        return 1; /* stop iterating */
+    }
+    return 0;
+}
+
+/* Bun 1.3.12+ compiled binaries: buno is a separate ELF loaded by ld.so,
+ * so its BUN_COMPILED.size is 0. The wrapper's vaddr belongs to the wrapper's
+ * mappings, not buno's. We mmap the .bun section from the wrapper and patch
+ * buno's BUN_COMPILED.size to point to the mapped section.
+ * Format: [u64 len][payload bytes] (src/StandaloneModuleGraph.zig, ELF.getData).
+ */
+static void patch_bun_compiled(void) {
+    const char *s = getenv("BUN_TERMUX_COMPILED");
+    if (!s) return;
+    unsetenv("BUN_TERMUX_COMPILED");
+
+    char *end;
+    unsigned long long target = strtoull(s, &end, 16);
+    unsigned long long off = (*end == ',') ? strtoull(end + 1, &end, 16) : 0;
+    unsigned long long len = (*end == ',') ? strtoull(end + 1, &end, 16) : 0;
+    if (*end != '\0' || target == 0 || len == 0) return;
+
+    int fd = real_openat(AT_FDCWD, "/proc/self/exe", O_RDONLY, 0);
+    if (fd < 0) return;
+
+    long ps = sysconf(_SC_PAGESIZE);
+    /* Bun's elf.zig page-aligns the .bun section offset, so
+     * 'off' is always page-aligned and the mmap offset is exact.
+     */
+    size_t map_len = ((size_t)len + ps - 1) & ~(size_t)(ps - 1);
+    void *mapped = mmap(NULL, map_len, PROT_READ, MAP_PRIVATE, fd, (off_t)off);
+    if (mapped != MAP_FAILED) {
+        /* BUN_COMPILED is a mutable global in buno's data segment,
+         * so the target page is already writable.
+         * buno is currently ET_EXEC (base == 0), but add the load base
+         * anyway so this keeps working if Bun ever switches to PIE. */
+        uintptr_t base = 0;
+        dl_iterate_phdr(find_exe_base, &base);
+        *(volatile uint64_t *)(base + target) = (uint64_t)mapped;
+    }
+    close(fd);
 }
 
 static int get_safe_dir_fd(void) {
