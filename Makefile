@@ -50,7 +50,7 @@ all: bun-termux bun-shim.so
 bun-shim.so: shim.c
 	@echo "Building shim against glibc..."
 	$(SHIM_CC) $(SHIM_CFLAGS) \
-		-I$(GLIBC_INC) \
+		-isystem$(GLIBC_INC) \
 		-L$(GLIBC_LIB) \
 		-Wl,-rpath,$(GLIBC_LIB) \
 		-Wl,-rpath-link,$(GLIBC_LIB) \
