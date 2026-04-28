@@ -6,6 +6,7 @@ Community guides and examples for using Bun-Termux with various projects.
 
 - [Drivebase](./drivebase/README.md) - Cloud-agnostic unified file manager with E2EE encryption
 - [OpenCode](./opencode/README.md) - AI coding assistant
+- [Pi Coding Agent](./pi-coding-agent/README.md) - A minimal and extensible AI terminal coding harness.
 
 ## Contributing
 
