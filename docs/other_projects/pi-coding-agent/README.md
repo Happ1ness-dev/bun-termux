@@ -83,6 +83,7 @@ pi
 
 ```bash
 cd /path/to/pi-mono
+git checkout -- packages/ai/src/models.generated.ts && \
 git pull --rebase --autostash
 
 # If you encounter weird errors when updating, you might want to nuke node_modules:
