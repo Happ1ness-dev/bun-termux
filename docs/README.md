@@ -87,8 +87,8 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 | `PREFIX` | `/data/data/com.termux/files/usr` | Runtime | Termux installation prefix; used by shim for shebang path translation |
 | `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Runtime | Temporary directory for shim (fallback if `BUN_FAKE_ROOT` is unset) |
 | `GLIBC_ROOT` | `/data/data/com.termux/files/usr/glibc` | Build | Build-time override for glibc installation path (Makefile only) |
-| `GLIBC_LD_SO` | `/data/data/com.termux/files/usr/glibc/lib/ld-linux-<arch>.so.X` | Both | Path to glibc's dynamic linker |
-| `GLIBC_LIB` | `/data/data/com.termux/files/usr/glibc/lib` | Both | Directory containing glibc shared libraries |
+| `GLIBC_LD_SO` | `/data/data/com.termux/files/usr/glibc/lib/ld-linux-<arch>.so.X` | Runtime | Path to glibc's dynamic linker |
+| `GLIBC_LIB` | `/data/data/com.termux/files/usr/glibc/lib` | Runtime | Directory containing glibc shared libraries |
 
 Scope: `Runtime` = read by wrapper/shim at runtime, `Build` = used by Makefile only, `Both` = used by both Makefile and runtime
 
