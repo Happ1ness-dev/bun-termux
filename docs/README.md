@@ -63,18 +63,24 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 
 ## How It Works
 
-1. Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-linux-<arch>.so.X`) without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the linker like when using grun), making compiled binaries work out of the box.
-2. Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
-3. Wrapper backs up original LD_PRELOAD and LD_LIBRARY_PATH to BUN_TERMUX_ORIG_LD_PRELOAD and BUN_TERMUX_ORIG_LD_LIBRARY_PATH.
-4. `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
-5. Shim preloads via the dynamic linker's `--preload` option and intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android.
-6. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
-7. Shim restores original LD_PRELOAD and LD_LIBRARY_PATH from BUN_TERMUX_ORIG_* env vars, ensuring that child processes inherit them.
-8. Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
-9. Shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
-10. Shim stubs `linkat()` and returns `EXDEV` (`error.NotSameFileSystem`), which forces bun to fall back to copyfile when installing packages.
-11. Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to the original binary, the shim rewrites the target to point to the wrapper instead, making `bun --bun` work.
-12. Shim intercepts `fopen()` and `fopen64()` on `/etc/resolv.conf`, `/etc/nsswitch.conf`, and `/etc/hosts`, redirecting them to `$PREFIX/etc/`. This allows bun's c-ares DNS resolver to find the correct configuration files on Android.
+### 1. Wrapper startup
+- Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
+- Wrapper backs up original `LD_PRELOAD` and `LD_LIBRARY_PATH` to `BUN_TERMUX_ORIG_LD_PRELOAD` and `BUN_TERMUX_ORIG_LD_LIBRARY_PATH`.
+- `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
+
+### 2. Userland exec
+Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-linux-<arch>.so.X`) without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the linker like when using grun), making compiled binaries work out of the box.
+
+### 3. Shim load
+Shim preloads via the dynamic linker's `--preload` option. Shim restores original `LD_PRELOAD` and `LD_LIBRARY_PATH` from `BUN_TERMUX_ORIG_*` env vars, ensuring that child processes inherit them.
+
+### 4. Runtime interception
+- **Directory access** - Shim intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
+- **DNS configs** - Shim intercepts `fopen()` and `fopen64()` on `/etc/resolv.conf`, `/etc/nsswitch.conf`, and `/etc/hosts`, redirecting them to `$PREFIX/etc/`. This allows bun's c-ares DNS resolver to find the correct configuration files on Android.
+- **Shebangs** - Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
+- **Temp paths** - Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to the original binary, the shim rewrites the target to point to the wrapper instead, making `bun --bun` work.
+- **CPU stats** - Shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
+- **Hardlinks** - Shim stubs `linkat()` and returns `EXDEV` (`error.NotSameFileSystem`), which forces bun to fall back to copyfile when installing packages.
 
 ## Environment Variables
 
