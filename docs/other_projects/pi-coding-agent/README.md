@@ -21,6 +21,10 @@ Once you're inside the pi-mono repo, you can proceed further.
 ### Step 1: Install dependencies
 
 ```bash
+# Remove pi-web-ui example workspace to avoid the weird recursion hell which causes `NameTooLong` error.
+# Remove stale pi-coding-agent root dep (Bun doesn't like the mismatch)
+sed -i -e '/"packages\/web-ui\/example",/d' -e '/"@mariozechner\/pi-coding-agent"/d' package.json
+
 # `GYP_DEFINES` and `--verbose` are needed for canvas to build successfully (I'm serious, verbose is necessary...)
 # `--linker=hoisted` to make the node_modules structure similar to npm
 GYP_DEFINES="android_ndk_path=''" BUN_OPTIONS="--os=linux --verbose --linker=hoisted" bun install
@@ -83,7 +87,7 @@ pi
 
 ```bash
 cd /path/to/pi-mono
-git checkout -- packages/ai/src/models.generated.ts && \
+git checkout -- packages/ai/src/models.generated.ts package.json && \
 git pull --rebase --autostash
 
 # If you encounter weird errors when updating, you might want to nuke node_modules:
