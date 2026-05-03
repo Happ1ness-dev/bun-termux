@@ -49,6 +49,7 @@ make uninstall
 This will:
 - Restore the original `bun` binary (renamed back from `buno`)
 - Remove `bun-shim.so` from the lib directory
+- Remove `bunx` from the bin directory
 - Clean up empty directories
 
 ## Usage
