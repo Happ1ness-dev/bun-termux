@@ -84,7 +84,7 @@ Shim preloads via the dynamic linker's `--preload` option.
 - **Directory access** - Shim intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
 - **DNS configs** - Shim intercepts `fopen()` and `fopen64()` on `/etc/resolv.conf`, `/etc/nsswitch.conf`, and `/etc/hosts`, redirecting them to `$PREFIX/etc/`. This allows bun's c-ares DNS resolver to find the correct configuration files on Android.
 - **Shebangs** - Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
-- **Temp paths** - Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to the original binary, the shim rewrites the target to point to the wrapper instead, making `bun --bun` work.
+- **Temp paths** - Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to `BUN_TERMUX_TARGET`, the shim rewrites them to point to `BUN_TERMUX_WRAPPER` instead, making `bun --bun` work.
 - **CPU stats** - Shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
 - **Hardlinks** - Shim stubs `linkat()` and returns `EXDEV` (`error.NotSameFileSystem`), which forces bun to fall back to copyfile when installing packages.
 
