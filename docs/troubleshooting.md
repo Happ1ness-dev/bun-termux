@@ -9,7 +9,7 @@ Install resolv-conf and link it (recommended):
 ```bash
 pkg install resolv-conf
 
-ln -sf $PREFIX/usr/etc/resolv.conf $PREFIX/usr/glibc/etc/resolv.conf
+ln -sf $PREFIX/etc/resolv.conf $PREFIX/glibc/etc/resolv.conf
 ```
 
 Or just create a file:
