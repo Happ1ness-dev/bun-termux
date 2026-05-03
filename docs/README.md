@@ -67,12 +67,18 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 - Wrapper sets `BUN_FAKE_ROOT` env var if it's unset.
 - Wrapper backs up original `LD_PRELOAD` and `LD_LIBRARY_PATH` to `BUN_TERMUX_ORIG_LD_PRELOAD` and `BUN_TERMUX_ORIG_LD_LIBRARY_PATH`.
 - `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
+- **Compiled binaries**
+  - **Bun 1.3.12+** - The wrapper carries the payload in its `.bun` section. Since the original bun was never modified, its `BUN_COMPILED.size` is zero. The wrapper parses both ELFs to find the original bun's `BUN_COMPILED` address and its own `.bun` offset and size, then passes them to the shim via `BUN_TERMUX_COMPILED`.
+  - **Pre-1.3.12** - The payload is appended after the ELF. The Bun runtime reads it directly from the file, so no runtime brokering is needed.
 
 ### 2. Userland exec
 Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-linux-<arch>.so.X`) without calling `execve()` - since the kernel never updates `/proc/self/exe`, it still points to the wrapper, so `bun build --compile` embeds the wrapper (not bun itself, and not the linker like when using grun), making compiled binaries work out of the box.
 
 ### 3. Shim load
-Shim preloads via the dynamic linker's `--preload` option. Shim restores original `LD_PRELOAD` and `LD_LIBRARY_PATH` from `BUN_TERMUX_ORIG_*` env vars, ensuring that child processes inherit them.
+Shim preloads via the dynamic linker's `--preload` option.
+
+- Shim restores original `LD_PRELOAD` and `LD_LIBRARY_PATH` from `BUN_TERMUX_ORIG_*` env vars, ensuring that child processes inherit them.
+- If `BUN_TERMUX_COMPILED` is present, the shim memory-maps the wrapper's `.bun` section from `/proc/self/exe` and patches the original bun's `BUN_COMPILED.size` to point to the mapped payload. This lets compiled binaries find their payload.
 
 ### 4. Runtime interception
 - **Directory access** - Shim intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
