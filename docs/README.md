@@ -95,7 +95,7 @@ Shim preloads via the dynamic linker's `--preload` option.
 |----------|---------|-------|-------------|
 | `BUN_INSTALL` | `~/.bun` | Both | Installation prefix. Controls where the wrapper looks for `buno`, `bun-shim.so`, and the fake-root directory |
 | `BUN_BINARY_PATH` | `$BUN_INSTALL/bin/buno` if `BUN_INSTALL` is set, otherwise `<wrapper_dir>/buno` | Runtime | Override the path to the original bun binary |
-| `BUN_FAKE_ROOT` | `$(BUN_INSTALL)/tmp/fake-root` | Runtime | Set by the wrapper only if not already present; used by the shim as the redirect target for `/`, `/data`, `/data/data` |
+| `BUN_FAKE_ROOT` | `$(BUN_INSTALL)/tmp/fake-root` | Runtime | Shim redirect target for restricted paths. If unset: wrapper sets it; shim falls back to `TMPDIR` |
 | `BUN_OPTIONS` | Unset | Runtime | Pass options to Bun (e.g. `--os=android` for native modules, `--verbose` for debugging install scripts) |
 | `PREFIX` | `/data/data/com.termux/files/usr` | Runtime | Termux prefix; fallback for wrapper glibc paths, primary for shim shebang and DNS config redirection |
 | `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Runtime | Temporary directory for shim (fallback if `BUN_FAKE_ROOT` is unset) |
