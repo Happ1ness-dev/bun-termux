@@ -117,11 +117,17 @@ Scope: `Runtime` = read by wrapper/shim at runtime, `Build` = used by Makefile o
 
 Binaries produced with `bun build --compile` already have the wrapper embedded, but if you need to run a binary that's been bundled elsewhere, you can use `replace_runtime.py` script to replace default Bun runtime with the wrapper.
 
-```
+```bash
 python helper_scripts/replace_runtime.py path/to/your/bundled_binary
 ```
 
 This will back up the original binary with a `.bak` extension and patch it to use the wrapper.
+
+If your wrapper is not at `$BUN_INSTALL/bin/bun` (default `~/.bun/bin/bun`), use `--wrapper`:
+
+```bash
+python helper_scripts/replace_runtime.py path/to/your/bundled_binary --wrapper /path/to/bun
+```
 
 ## Troubleshooting
 
