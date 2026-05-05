@@ -8,6 +8,7 @@ bundled binary formats. Auto-detects input format and matches it by default.
 Credit: https://github.com/kaan-escober/bun-termux-loader/blob/master/build.py
 """
 
+import os
 import struct
 import sys
 from pathlib import Path
@@ -321,7 +322,8 @@ def replace_runtime(input_path, output_path=None, wrapper_path=None, force_forma
         output_file = input_file
 
     if wrapper_path is None:
-        wrapper_path = "~/.bun/bin/bun"
+        bun_install = os.environ.get('BUN_INSTALL') or '~/.bun'
+        wrapper_path = f"{bun_install}/bin/bun"
     wrapper_file = Path(wrapper_path).expanduser().resolve()
 
     if not input_file.exists():
@@ -405,7 +407,7 @@ Arguments:
                      and the output overwrites the original file.
 
 Options:
-  --wrapper <path>   Path to the wrapper binary (default: ~/.bun/bin/bun)
+  --wrapper <path>   Path to the wrapper binary (default: $BUN_INSTALL/bin/bun, or ~/.bun/bin/bun)
   --format <fmt>     Output format: auto, old, or new (default: auto)
                      auto: match the input binary's format
                      old:  force old-style (append payload + size trailer)
