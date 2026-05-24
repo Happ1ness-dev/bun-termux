@@ -14,6 +14,10 @@
   <a href="#credits">Credits</a>
 </p>
 
+&nbsp;
+
+> <small>Want to use Drivebase, OpenCode, or Pi with Bun in Termux? See [other projects guides](docs/other_projects/README.md#using-bun-termux-with-other-projects).</small>
+
 ## Quick Start
 
 ### 1. Install
