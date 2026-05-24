@@ -1,5 +1,10 @@
 # Running Drivebase with Bun-Termux
 
+[Learn more about Drivebase](https://github.com/drivebase/drivebase/blob/main/README.md)
+
+> [!WARNING]
+> Do not report any issues with Drivebase to the original author unless you're 100% sure they're not caused by Bun-Termux.
+
 ## Prerequisites
 
 - Bun and Bun-Termux installed (See [Quick Start](../../../README.md#quick-start))
