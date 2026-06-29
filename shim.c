@@ -210,7 +210,7 @@ static int generate_proc_stat(char *buf, size_t size) {
     if (n < 0) return n;
     total += n;
     
-    for (int i = 0; i < ncpu && total < (int)size - 32; i++) {
+    for (int i = 0; i < ncpu && total < (int)size - 128; i++) {
         n = snprintf(buf + total, size - total, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
         if (n < 0) return n;
         total += n;
