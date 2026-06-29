@@ -181,10 +181,6 @@ static void patch_bun_compiled(void) {
     close(fd);
 }
 
-static int get_safe_dir_fd(void) {
-    return safe_dir_fd;
-}
-
 static int should_redirect(const char *pathname) {
     if (!pathname) return 0;
     size_t len = strlen(pathname);
@@ -245,9 +241,8 @@ static int do_openat(int (*real_fn)(int, const char *, int, ...),
     }
 
     if ((flags & O_DIRECTORY) && should_redirect(pathname)) {
-        int safe_fd = get_safe_dir_fd();
-        if (safe_fd >= 0) {
-            int dup_fd = dup(safe_fd);
+        if (safe_dir_fd >= 0) {
+            int dup_fd = dup(safe_dir_fd);
             if (dup_fd >= 0) return dup_fd;
         }
     }
