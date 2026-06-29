@@ -52,6 +52,11 @@ static void die(const char *msg) {
     _exit(1);
 }
 
+static inline const char *getenv_nonempty(const char *name) {
+    const char *val = getenv(name);
+    return (val && *val) ? val : NULL;
+}
+
 static inline void path_build(char *buf, size_t bufsize, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -450,17 +455,17 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
 
 int main(int argc, char **argv, char **envp) {
     
-    const char *bun_install = getenv("BUN_INSTALL");
-    const char *bun_binary = getenv("BUN_BINARY_PATH");
-    const char *prefix = getenv("PREFIX");
+    const char *bun_install = getenv_nonempty("BUN_INSTALL");
+    const char *bun_binary = getenv_nonempty("BUN_BINARY_PATH");
+    const char *prefix = getenv_nonempty("PREFIX");
     static char ld_path[PATH_MAX], lib_path[PATH_MAX];
     
     const char *ld_so = resolve_glibc_path(ld_path, sizeof(ld_path),
-                                           getenv("GLIBC_LD_SO"), prefix,
+                                           getenv_nonempty("GLIBC_LD_SO"), prefix,
                                            "/glibc/lib/" LD_SO_NAME, LD_SO);
     
     const char *glibc_lib = resolve_glibc_path(lib_path, sizeof(lib_path),
-                                               getenv("GLIBC_LIB"), prefix,
+                                               getenv_nonempty("GLIBC_LIB"), prefix,
                                                "/glibc/lib", GLIBC_LIB);
     
     char self_dir[PATH_MAX];
@@ -536,7 +541,7 @@ have_shim:
     if (has_orig_libpath) ADD_INJECTION(orig_libpath);
 
     static char fake_root_env[PATH_MAX + 20];
-    if (!getenv("BUN_FAKE_ROOT")) {
+    if (!getenv_nonempty("BUN_FAKE_ROOT")) {
         path_build(fake_root_env, sizeof(fake_root_env), "BUN_FAKE_ROOT=%s", fake_root);
         ADD_INJECTION(fake_root_env);
     }

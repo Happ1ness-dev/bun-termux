@@ -39,6 +39,11 @@ static int (*real_linkat)(int, const char *, int, const char *, int) = NULL;
 static int (*real_mkdir)(const char *, mode_t) = NULL;
 static int (*real_symlink)(const char *, const char *) = NULL;
 
+static inline const char *getenv_nonempty(const char *name) {
+    const char *val = getenv(name);
+    return (val && *val) ? val : NULL;
+}
+
 /* Translate paths to use $PREFIX */
 static const char *translate_path(const char *path, char *buf, size_t bufsize) {
     if (!path) return path;
@@ -114,17 +119,17 @@ static void init_shim(void) {
         _exit(1);
     }
 
-    PREFIX = getenv("PREFIX");
+    PREFIX = getenv_nonempty("PREFIX");
     if (!PREFIX) PREFIX = PREFIX_DEFAULT;
 
-    TMPDIR = getenv("TMPDIR");
+    TMPDIR = getenv_nonempty("TMPDIR");
     if (!TMPDIR) TMPDIR = "/data/data/com.termux/files/usr/tmp";
 
-    WRAPPER_PATH = getenv("BUN_TERMUX_WRAPPER");
-    TARGET_PATH = getenv("BUN_TERMUX_TARGET");
+    WRAPPER_PATH = getenv_nonempty("BUN_TERMUX_WRAPPER");
+    TARGET_PATH = getenv_nonempty("BUN_TERMUX_TARGET");
 
-    SAFE_DIR = getenv("BUN_FAKE_ROOT");
-    if (!SAFE_DIR) SAFE_DIR = getenv("TMPDIR");
+    SAFE_DIR = getenv_nonempty("BUN_FAKE_ROOT");
+    if (!SAFE_DIR) SAFE_DIR = getenv_nonempty("TMPDIR");
     if (!SAFE_DIR) SAFE_DIR = "/data/data/com.termux/files/usr/tmp";
     safe_dir_fd = real_openat(AT_FDCWD, SAFE_DIR,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
