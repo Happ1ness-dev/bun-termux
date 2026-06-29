@@ -35,7 +35,6 @@ static int (*real_openat64)(int, const char *, int, ...) = NULL;
 static FILE *(*real_fopen)(const char *, const char *) = NULL;
 static FILE *(*real_fopen64)(const char *, const char *) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
-static int (*real_linkat)(int, const char *, int, const char *, int) = NULL;
 static int (*real_mkdir)(const char *, mode_t) = NULL;
 static int (*real_symlink)(const char *, const char *) = NULL;
 
@@ -108,12 +107,11 @@ static void init_shim(void) {
     real_fopen = dlsym(RTLD_NEXT, "fopen");
     real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
     real_execve = dlsym(RTLD_NEXT, "execve");
-    real_linkat = dlsym(RTLD_NEXT, "linkat");
     real_mkdir = dlsym(RTLD_NEXT, "mkdir");
     real_symlink = dlsym(RTLD_NEXT, "symlink");
 
     if (!real_openat || !real_openat64 || !real_fopen || !real_fopen64 ||
-        !real_execve || !real_linkat || !real_mkdir || !real_symlink) {
+        !real_execve || !real_mkdir || !real_symlink) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
         syscall(SYS_write, STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
