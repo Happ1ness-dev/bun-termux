@@ -45,28 +45,17 @@ static inline const char *getenv_nonempty(const char *name) {
 
 /* Translate paths to use $PREFIX */
 static const char *translate_path(const char *path, char *buf, size_t bufsize) {
+    static const char *prefixes[] = {
+        "/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/",
+    };
     if (!path) return path;
-    int n;
-    
-    if (strncmp(path, "/usr/bin/", 9) == 0) {
-        n = snprintf(buf, bufsize, "%s/bin/%s", PREFIX, path + 9);
-        if (n < 0 || (size_t)n >= bufsize) return path;
-        return buf;
-    }
-    if (strncmp(path, "/bin/", 5) == 0) {
-        n = snprintf(buf, bufsize, "%s/bin/%s", PREFIX, path + 5);
-        if (n < 0 || (size_t)n >= bufsize) return path;
-        return buf;
-    }
-    if (strncmp(path, "/usr/sbin/", 10) == 0) {
-        n = snprintf(buf, bufsize, "%s/bin/%s", PREFIX, path + 10);
-        if (n < 0 || (size_t)n >= bufsize) return path;
-        return buf;
-    }
-    if (strncmp(path, "/sbin/", 6) == 0) {
-        n = snprintf(buf, bufsize, "%s/bin/%s", PREFIX, path + 6);
-        if (n < 0 || (size_t)n >= bufsize) return path;
-        return buf;
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+        int skip = strlen(prefixes[i]);
+        if (strncmp(path, prefixes[i], skip) == 0) {
+            int n = snprintf(buf, bufsize, "%s/bin/%s", PREFIX, path + skip);
+            if (n < 0 || (size_t)n >= bufsize) return path;
+            return buf;
+        }
     }
     return path;
 }
