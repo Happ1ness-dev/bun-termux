@@ -39,7 +39,7 @@
 #define LD_SO     "/data/data/com.termux/files/usr/glibc/lib/" LD_SO_NAME
 #define GLIBC_LIB "/data/data/com.termux/files/usr/glibc/lib"
 #define MAX_ENV_INJECTIONS 8  /* Current: 6, headroom: 2 */
-#define STACK_AUXV_RESERVE 256
+#define STACK_GUARD 256
 
 /* Bun 1.3.12+ requires a .bun section for --compile */
 typedef struct { uint64_t size; } BunCompiledHeader;
@@ -344,7 +344,7 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
 
     #define PUSH_STR(s) ({ \
         size_t _l = strlen(s) + 1; \
-        if ((size_t)sp - _l < stack_base + STACK_AUXV_RESERVE) die("stack overflow"); \
+        if ((size_t)sp - _l < stack_base + STACK_GUARD) die("stack overflow"); \
         sp -= _l; memcpy(sp, s, _l); (size_t)sp; })
     #define PUSH_VAL(v) do { size_t _v = (v); sp -= 8; memcpy(sp, &_v, 8); } while(0)
 
