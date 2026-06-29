@@ -211,7 +211,7 @@ static size_t find_phdr_addr(const Elf64_Ehdr *eh, size_t base_addr) {
 
 static elf_info_t load_elf(int fd, size_t ps) {
     struct stat st;
-    fstat(fd, &st);
+    if (fstat(fd, &st) < 0) die("fstat ld.so failed");
 
     uint8_t *fdata = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (fdata == MAP_FAILED) die("mmap ld.so failed");
