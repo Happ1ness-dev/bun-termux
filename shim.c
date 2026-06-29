@@ -260,7 +260,8 @@ static int do_openat(int (*real_fn)(int, const char *, int, ...),
     if ((flags & O_DIRECTORY) && should_redirect(pathname)) {
         int safe_fd = get_safe_dir_fd();
         if (safe_fd >= 0) {
-            return dup(safe_fd);
+            int dup_fd = dup(safe_fd);
+            if (dup_fd >= 0) return dup_fd;
         }
     }
 
