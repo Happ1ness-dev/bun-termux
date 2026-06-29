@@ -132,7 +132,7 @@ static void ensure_dir(const char *path) {
             *p = '/';
         }
     }
-    mkdir(tmp, 0755);
+    if (mkdir(tmp, 0755) < 0 && errno != EEXIST) die("mkdir fake_root");
 }
 
 typedef struct {
