@@ -129,6 +129,7 @@ See [docs/README.md](docs/README.md#environment-variables) for all variables and
 3. Bun install/add/update/remove commands might require `BUN_OPTIONS="--os=android"` env var if they install native modules.
 4. If bun somehow fails to walk the current path due to permission error, it'll fail to get the current env vars too. I'll have to investigate why.
 5. When using `bun install`, some module install scripts might fail without `BUN_OPTIONS="--verbose"`.
+6. `bun create` will skip copying `gitignore` -> `.gitignore` since it always tries to hardlink it and has no copyfile fallback when that fails (e.g. EXDEV), leaving the project without a `.gitignore`.
 
 
 ## Troubleshooting
