@@ -103,7 +103,7 @@ Uses "userland exec" to launch the real Bun binary through glibc's dynamic linke
 
 **2. LD_PRELOAD Shim (`bun-shim.so`)**
 Intercepts system calls to work around Android restrictions:
-- Redirects `/`, `/data`, `/storage` → fake root directory (avoids permission denied)
+- Redirects denied opens of CWD parents → fake root directory (avoids `EACCES` when Bun walks parent dirs)
 - Redirects shebang paths (e.g. `/usr/bin/env`) → Termux prefix
 - Fakes `/proc/stat` → makes `os.cpus()` work
 - Stubs hardlinking → makes `bun install` work
