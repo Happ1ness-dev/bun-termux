@@ -236,7 +236,7 @@ static int do_openat(int (*real_fn)(int, const char *, int, ...),
     }
 
     mode_t mode = 0;
-    if (flags & O_CREAT)
+    if (__OPEN_NEEDS_MODE(flags))
         mode = va_arg(ap, mode_t);
     int fd = real_fn(dirfd, pathname, flags, mode);
 
