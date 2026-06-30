@@ -116,8 +116,7 @@ static void init_shim(void) {
     TARGET_PATH = getenv_nonempty("BUN_TERMUX_TARGET");
 
     SAFE_DIR = getenv_nonempty("BUN_FAKE_ROOT");
-    if (!SAFE_DIR) SAFE_DIR = getenv_nonempty("TMPDIR");
-    if (!SAFE_DIR) SAFE_DIR = "/data/data/com.termux/files/usr/tmp";
+    if (!SAFE_DIR) SAFE_DIR = TMPDIR;
     safe_dir_fd = real_openat(AT_FDCWD, SAFE_DIR,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
 
