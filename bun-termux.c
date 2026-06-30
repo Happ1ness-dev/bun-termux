@@ -180,8 +180,10 @@ static void load_elf_segments(int fd, const Elf64_Ehdr *eh, uint8_t *base,
             if (in_page > bsz) in_page = bsz;
             memset(bss, 0, in_page);
             if (bsz > in_page) {
+                /* MAP_ANON pages are pre-zeroed. Map at final prot so the
+                 * anon BSS tail is never writable for !(PF_W) segments. */
                 void *a = mmap(bss + in_page, page_round_up(bsz - in_page, ps),
-                              prot | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+                              prot, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
                 if (a == MAP_FAILED) die("BSS map failed");
             }
         }
