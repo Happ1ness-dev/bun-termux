@@ -348,8 +348,6 @@ static void userland_exec(const char *ldso, const char **argv, size_t argc,
         size_t _l = strlen(s) + 1; \
         if ((size_t)sp - _l < stack_base + STACK_GUARD) die("stack overflow"); \
         sp -= _l; memcpy(sp, s, _l); (size_t)sp; })
-    #define PUSH_VAL(v) do { size_t _v = (v); sp -= 8; memcpy(sp, &_v, 8); } while(0)
-
     size_t plat_addr = PUSH_STR(ARCH_NAME);
 
     /* AT_BASE_PLATFORM - "real" hardware name, same as platform for most */
