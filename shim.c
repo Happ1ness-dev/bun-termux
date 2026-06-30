@@ -29,6 +29,15 @@ static const char *PREFIX = NULL;
 static const char *TMPDIR = NULL;
 static const char *WRAPPER_PATH = NULL;
 static const char *TARGET_PATH = NULL;
+static char orig_cwd[PATH_MAX] = {0};
+
+static int is_ancestor(const char *pathname) {
+    if (!orig_cwd[0] || !pathname || !*pathname) return 0;
+    size_t plen = strlen(pathname);
+    while (plen > 1 && pathname[plen-1] == '/') plen--;
+    if (strncmp(orig_cwd, pathname, plen) != 0) return 0;
+    return (plen == 1) || (orig_cwd[plen] == '/');
+}
 
 static int (*real_openat)(int, const char *, int, ...) = NULL;
 static int (*real_openat64)(int, const char *, int, ...) = NULL;
@@ -120,6 +129,10 @@ static void init_shim(void) {
     safe_dir_fd = real_openat(AT_FDCWD, SAFE_DIR,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
 
+    /* Cache CWD for ancestor checks in directory redirection */
+    if (!getcwd(orig_cwd, sizeof(orig_cwd)))
+        orig_cwd[0] = '\0';
+
     /* Restore original LD_* variables that were filtered during userland exec */
     if ((orig = getenv("BUN_TERMUX_ORIG_LD_PRELOAD"))) {
         setenv("LD_PRELOAD", orig, 1);
@@ -180,23 +193,6 @@ static void patch_bun_compiled(void) {
     close(fd);
 }
 
-static int should_redirect(const char *pathname) {
-    if (!pathname) return 0;
-    size_t len = strlen(pathname);
-    if (len == 1 && pathname[0] == '/') return 1;
-    if (len == 5 && memcmp(pathname, "/data", 5) == 0) return 1;
-    if (len == 6 && memcmp(pathname, "/data/", 6) == 0) return 1;
-    if (len == 10 && memcmp(pathname, "/data/data", 10) == 0) return 1;
-    if (len == 11 && memcmp(pathname, "/data/data/", 11) == 0) return 1;
-    if (len == 8 && memcmp(pathname, "/storage", 8) == 0) return 1;
-    if (len == 9 && memcmp(pathname, "/storage/", 9) == 0) return 1;
-    if (len == 17 && memcmp(pathname, "/storage/emulated", 17) == 0) return 1;
-    if (len == 18 && memcmp(pathname, "/storage/emulated/", 18) == 0) return 1;
-    if (len == 19 && memcmp(pathname, "/storage/emulated/0", 19) == 0) return 1;
-    if (len == 20 && memcmp(pathname, "/storage/emulated/0/", 20) == 0) return 1;
-    return 0;
-}
-
 static int generate_proc_stat(char *buf, size_t size) {
     int ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     if (ncpu < 1) ncpu = 1;
@@ -239,18 +235,21 @@ static int do_openat(int (*real_fn)(int, const char *, int, ...),
         }
     }
 
-    if ((flags & O_DIRECTORY) && should_redirect(pathname)) {
-        if (safe_dir_fd >= 0) {
-            int dup_fd = dup(safe_dir_fd);
-            if (dup_fd >= 0) return dup_fd;
-        }
+    mode_t mode = 0;
+    if (flags & O_CREAT)
+        mode = va_arg(ap, mode_t);
+    int fd = real_fn(dirfd, pathname, flags, mode);
+
+    if (fd < 0 && errno == EACCES && (flags & O_DIRECTORY) && safe_dir_fd >= 0 && is_ancestor(pathname)) {
+        int saved_errno = errno;
+        int dup_fd = fcntl(safe_dir_fd, F_DUPFD_CLOEXEC, 0);
+        if (dup_fd >= 0)
+            fd = dup_fd;
+        else
+            errno = saved_errno;
     }
 
-    if (flags & O_CREAT) {
-        mode_t mode = va_arg(ap, mode_t);
-        return real_fn(dirfd, pathname, flags, mode);
-    }
-    return real_fn(dirfd, pathname, flags);
+    return fd;
 }
 
 int openat(int dirfd, const char *pathname, int flags, ...) {
