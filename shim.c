@@ -223,7 +223,8 @@ static int do_openat(int (*real_fn)(int, const char *, int, ...),
     if (pathname && strcmp(pathname, "/proc/stat") == 0) {
         int fd = memfd_create("proc_stat", MFD_CLOEXEC);
         if (fd >= 0) {
-            char buf[2048];
+            /* Sized for the ncpu cap: header + 256 cpu lines (~27 B each) + footer. */
+            char buf[8192];
             int n = generate_proc_stat(buf, sizeof(buf));
             if (n > 0) {
                 ssize_t written = write(fd, buf, n);
