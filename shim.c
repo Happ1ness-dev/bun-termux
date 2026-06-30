@@ -34,6 +34,11 @@ static char orig_cwd[PATH_MAX] = {0};
 static int is_ancestor(const char *pathname) {
     if (!orig_cwd[0] || !pathname || !*pathname) return 0;
     size_t plen = strlen(pathname);
+    /* Bun opens CWD ancestors with trailing slashes (e.g. "/data/"). Strip them
+     * so the prefix match against orig_cwd (no trailing slash) below works.
+     *
+     * See: bun-bun-v1.3.13/src/resolver/resolver.zig (dirInfoCachedMaybeLog)
+     */
     while (plen > 1 && pathname[plen-1] == '/') plen--;
     if (strncmp(orig_cwd, pathname, plen) != 0) return 0;
     return (plen == 1) || (orig_cwd[plen] == '/');
