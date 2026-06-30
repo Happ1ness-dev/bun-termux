@@ -82,7 +82,7 @@ Shim preloads via the dynamic linker's `--preload` option.
 - If `BUN_TERMUX_COMPILED` is present, the shim memory-maps the wrapper's `.bun` section from `/proc/self/exe` and patches the original bun's `BUN_COMPILED.size` to point to the mapped payload. This lets compiled binaries find their payload.
 
 ### 4. Runtime interception
-- **Directory access** - Shim intercepts `openat()` on `/`, `/data`, `/data/data`, `/storage`, `/storage/emulated`, `/storage/emulated/0` (including trailing slashes). When `BUN_FAKE_ROOT` is set, these paths are redirected to that directory to avoid permission issues on Android. If `BUN_FAKE_ROOT` is not set, the shim falls back to `TMPDIR` (or `/data/data/com.termux/files/usr/tmp`).
+- **Directory access** - Shim intercepts `openat()` and `openat64()`. When an `O_DIRECTORY` open of a CWD ancestor (e.g. `/`, `/data`, `/storage`) fails with `EACCES`, the shim returns a fd to a safe directory instead (`BUN_FAKE_ROOT` if set, else `TMPDIR`, or `/data/data/com.termux/files/usr/tmp`). Other opens pass through unchanged.
 - **DNS configs** - Shim intercepts `fopen()` and `fopen64()` on `/etc/resolv.conf`, `/etc/nsswitch.conf`, and `/etc/hosts`, redirecting them to `$PREFIX/etc/`. This allows bun's c-ares DNS resolver to find the correct configuration files on Android.
 - **Shebangs** - Shim intercepts `execve()` for shebangs beginning with `/usr/bin/`, `/bin/`, `/usr/sbin/`, `/sbin/`, and redirects them to use `PREFIX`.
 - **Temp paths** - Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to `BUN_TERMUX_TARGET`, the shim rewrites them to point to `BUN_TERMUX_WRAPPER` instead, making `bun --bun` work.
