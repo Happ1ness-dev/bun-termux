@@ -97,6 +97,15 @@ static int has_orig_libpath = 0;
 static size_t filter_envp(char **src, const char **dst, size_t max) {
     size_t n = 0;
     for (char **e = src; *e && n < max; e++) {
+        /* These are internal markers the wrapper injects below. Drop any a
+         * user may have set so they can't shadow the injected value. */
+        if (strncmp(*e, "BUN_TERMUX_ORIG_LD_PRELOAD=", sizeof("BUN_TERMUX_ORIG_LD_PRELOAD=") - 1) == 0)
+            continue;
+        if (strncmp(*e, "BUN_TERMUX_ORIG_LD_LIBRARY_PATH=", sizeof("BUN_TERMUX_ORIG_LD_LIBRARY_PATH=") - 1) == 0)
+            continue;
+        if (strncmp(*e, "BUN_TERMUX_COMPILED=", sizeof("BUN_TERMUX_COMPILED=") - 1) == 0)
+            continue;
+
         if (strncmp(*e, "LD_PRELOAD=", 11) == 0) {
             int len = snprintf(orig_preload, sizeof(orig_preload),
                                "BUN_TERMUX_ORIG_LD_PRELOAD=%s", *e + 11);
