@@ -481,7 +481,7 @@ def replace_runtime(input_path, output_path=None, wrapper_path=None, force_forma
     try:
         if out_format == 'old':
             output_data = build_old_style(wrapper_data, payload)
-            log(f"Built old-style appended binary")
+            log("Built old-style appended binary")
         elif detect_bun_layout(input_data) == 'grow':
             output_data = build_new_style_grow(wrapper_data, payload)
             log("Built new-style ELF (grow-RW, Bun 1.3.14+ layout)")
