@@ -35,7 +35,14 @@ CFLAGS = -Wall -Wextra -Werror=implicit-function-declaration \
          -Werror=format-security -O2
 
 SHIM_CFLAGS = $(CFLAGS) -shared -fPIC -nostdlib
-WRAPPER_CFLAGS = $(CFLAGS)
+# -z norelro folds .bss into the writable PT_LOAD (no separate BSS segment).
+# Bun 1.3.14's --compile writer (src/exe_format/elf.zig writeBunSection)
+# injects .bun by growing the first writable PT_LOAD. With RELRO the linker
+# splits writable data into a read-only-after-reloc segment (.dynamic/.got)
+# and a separate writable BSS segment. The grown segment spans that BSS
+# segment, producing overlapping PT_LOADs the kernel rejects with EEXIST at
+# execve. Bun itself ships without RELRO.
+WRAPPER_CFLAGS = $(CFLAGS) -Wl,-z,norelro
 
 # Paths (GLIBC_ROOT can be overridden via env or make arg)
 GLIBC_ROOT ?= /data/data/com.termux/files/usr/glibc
@@ -60,6 +67,9 @@ bun-shim.so: shim.c
 bun-termux: bun-termux.c
 	@echo "Building wrapper for $(TARGET_ARCH)..."
 	$(WRAPPER_CC) $(WRAPPER_CFLAGS) -o $@ $<
+	@if llvm-readelf -lW $@ 2>/dev/null | grep -q 'GNU_RELRO'; then \
+		echo "Error: $@ has GNU_RELRO; expected -Wl,-z,norelro to fold BSS into the RW segment"; exit 1; \
+	fi
 
 install: bun-termux bun-shim.so
 	@echo "Installing to $(BUN_PREFIX)..."
