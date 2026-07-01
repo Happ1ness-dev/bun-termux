@@ -218,6 +218,24 @@ def extract_payload_new(data):
     return data[bun_off + U64_SIZE:bun_off + U64_SIZE + payload_len]
 
 
+def require_bun_section(elf):
+    idx, shdr = elf.find_section('.bun')
+    if idx is None:
+        raise ElfError(
+            "Wrapper has no .bun section. Rebuild wrapper with 'make' to support new-style binaries."
+        )
+    return idx, shdr['sh_offset']
+
+
+def max_load_vaddr_end(elf):
+    end = 0
+    for i in range(elf.e_phnum):
+        phdr = elf.read_phdr(i)
+        if phdr['p_type'] == PT_LOAD:
+            end = max(end, phdr['p_vaddr'] + phdr['p_memsz'])
+    return end
+
+
 def build_old_style(wrapper_data, payload):
     """Build old-style output: wrapper + payload + 8-byte total."""
     output = bytearray(wrapper_data) + payload
@@ -231,12 +249,7 @@ def build_new_style(wrapper_data, payload):
     data = bytearray(wrapper_data)
     elf = ElfParser(data)
 
-    bun_idx, bun_shdr = elf.find_section('.bun')
-    if bun_idx is None:
-        raise ElfError(
-            "Wrapper has no .bun section. Rebuild wrapper with 'make' to support new-style binaries."
-        )
-    bun_section_offset = bun_shdr['sh_offset']
+    bun_idx, bun_section_offset = require_bun_section(elf)
 
     gs_idx, _ = elf.find_phdr_by_type(PT_GNU_STACK)
     if gs_idx is None:
@@ -244,14 +257,7 @@ def build_new_style(wrapper_data, payload):
 
     ps = page_size(elf.e_machine)
 
-    max_vaddr_end = 0
-    for i in range(elf.e_phnum):
-        phdr = elf.read_phdr(i)
-        if phdr['p_type'] != PT_LOAD:
-            continue
-        max_vaddr_end = max(max_vaddr_end, phdr['p_vaddr'] + phdr['p_memsz'])
-
-    new_vaddr = align_up(max_vaddr_end, ps)
+    new_vaddr = align_up(max_load_vaddr_end(elf), ps)
     new_file_offset = align_up(len(data), ps)
 
     header_size = U64_SIZE
