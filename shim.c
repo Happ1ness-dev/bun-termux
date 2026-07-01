@@ -248,7 +248,8 @@ static int do_openat(int (*real_fn)(int, const char *, int, ...),
 
     if (fd < 0 && errno == EACCES && (flags & O_DIRECTORY) && safe_dir_fd >= 0 && is_ancestor(pathname)) {
         int saved_errno = errno;
-        int dup_fd = fcntl(safe_dir_fd, F_DUPFD_CLOEXEC, 0);
+        int cmd = (flags & O_CLOEXEC) ? F_DUPFD_CLOEXEC : F_DUPFD;
+        int dup_fd = fcntl(safe_dir_fd, cmd, 0);
         if (dup_fd >= 0)
             fd = dup_fd;
         else
