@@ -24,8 +24,11 @@ EM_AARCH64 = 183
 
 PT_LOAD = 1
 PT_GNU_STACK = 0x6474E551
+PT_GNU_RELRO = 0x6474E552
 
 PF_R = 4
+PF_W = 2
+SHT_NOBITS = 8
 
 U64_SIZE = struct.calcsize('<Q')  # sizeof(uint64_t)
 
@@ -218,6 +221,23 @@ def extract_payload_new(data):
     return data[bun_off + U64_SIZE:bun_off + U64_SIZE + payload_len]
 
 
+def detect_bun_layout(data):
+    """'grow' if .bun lives in a writable PT_LOAD (Bun 1.3.14+ writeBunSection
+    layout), 'late' if in a separate read-only late PT_LOAD (Bun <=1.3.13)."""
+    elf = ElfParser(data)
+    idx, shdr = elf.find_section('.bun')
+    if idx is None:
+        return None
+    bun_vaddr = shdr['sh_addr']
+    for i in range(elf.e_phnum):
+        phdr = elf.read_phdr(i)
+        if phdr['p_type'] != PT_LOAD:
+            continue
+        if phdr['p_vaddr'] <= bun_vaddr < phdr['p_vaddr'] + phdr['p_memsz']:
+            return 'grow' if (phdr['p_flags'] & PF_W) else 'late'
+    return None
+
+
 def require_bun_section(elf):
     idx, shdr = elf.find_section('.bun')
     if idx is None:
@@ -308,6 +328,91 @@ def build_new_style(wrapper_data, payload):
     return bytes(data)
 
 
+def build_new_style_grow(wrapper_data, payload):
+    """Inject .bun by growing the first writable PT_LOAD - the Bun 1.3.14+
+    writeBunSection algorithm (src/exe_format/elf.zig). Unlike build_new_style
+    (late PT_LOAD via PT_GNU_STACK), this relocates every non-ALLOC section
+    past the payload, since that file range becomes file-backed BSS inside
+    the extended segment."""
+    data = bytearray(wrapper_data)
+    elf = ElfParser(data)
+
+    bun_idx, bun_section_offset = require_bun_section(elf)
+
+    ps = page_size(elf.e_machine)
+
+    rw_idx = None
+    rw_phdr = None
+    for i in range(elf.e_phnum):
+        phdr = elf.read_phdr(i)
+        if phdr['p_type'] == PT_GNU_RELRO:
+            raise ElfError(
+                "Wrapper has GNU_RELRO; grow-RW injection would overlap its BSS "
+                "PT_LOAD. Rebuild it with 'make' (-Wl,-z,norelro)."
+            )
+        if phdr['p_type'] != PT_LOAD:
+            continue
+        if (phdr['p_flags'] & PF_W) and rw_idx is None:
+            rw_idx = i
+            rw_phdr = phdr
+    if rw_idx is None:
+        raise ElfError("Wrapper has no writable PT_LOAD segment")
+
+    new_vaddr = align_up(max_load_vaddr_end(elf), ps)
+    offset_in_segment = new_vaddr - rw_phdr['p_vaddr']
+    new_file_offset = rw_phdr['p_offset'] + offset_in_segment
+
+    header_size = U64_SIZE
+    new_content_size = header_size + len(payload)
+    aligned_new_size = align_up(new_content_size, ps)
+
+    move_src_start = rw_phdr['p_offset'] + rw_phdr['p_filesz']
+    move_src_end = len(data)
+    moved_tail_size = move_src_end - move_src_start
+    move_dst_start = new_file_offset + aligned_new_size
+    total_new_size = move_dst_start + moved_tail_size
+
+    old_shdr_offset = elf.e_shoff
+    shdr_table_size = elf.e_shnum * elf.e_shentsize
+    if old_shdr_offset < move_src_start or \
+       old_shdr_offset + shdr_table_size > move_src_end:
+        raise ElfError("Section header table not in relocatable tail")
+
+    data.extend(b'\x00' * (total_new_size - len(data)))
+
+    if moved_tail_size:
+        data[move_dst_start:move_dst_start + moved_tail_size] = \
+            data[move_src_start:move_src_end]
+        data[move_src_start:new_file_offset] = b'\x00' * (new_file_offset - move_src_start)
+
+    struct.pack_into('<Q', data, new_file_offset, len(payload))
+    data[new_file_offset + header_size:new_file_offset + new_content_size] = payload
+    payload_end = new_file_offset + new_content_size
+    if move_dst_start > payload_end:
+        data[payload_end:move_dst_start] = b'\x00' * (move_dst_start - payload_end)
+
+    struct.pack_into('<Q', data, bun_section_offset, new_vaddr)
+
+    new_shdr_offset = old_shdr_offset + (move_dst_start - move_src_start)
+    elf.set_e_shoff(new_shdr_offset)
+    for i in range(elf.e_shnum):
+        shdr = elf.read_shdr(i)
+        if i == bun_idx:
+            shdr['sh_offset'] = new_file_offset
+            shdr['sh_size'] = new_content_size
+            shdr['sh_addr'] = new_vaddr
+        elif shdr['sh_type'] != SHT_NOBITS and \
+             move_src_start <= shdr['sh_offset'] < move_src_end:
+            shdr['sh_offset'] += move_dst_start - move_src_start
+        elf.write_shdr(i, shdr)
+
+    rw_phdr['p_filesz'] = offset_in_segment + aligned_new_size
+    rw_phdr['p_memsz'] = offset_in_segment + aligned_new_size
+    elf.write_phdr(rw_idx, rw_phdr)
+
+    return bytes(data)
+
+
 def replace_runtime(input_path, output_path=None, wrapper_path=None, force_format=None):
     input_file = Path(input_path).resolve()
 
@@ -374,12 +479,15 @@ def replace_runtime(input_path, output_path=None, wrapper_path=None, force_forma
     log(f"Extracted payload: {len(payload):,} bytes")
 
     try:
-        if out_format == 'new':
-            output_data = build_new_style(wrapper_data, payload)
-            log(f"Built new-style ELF with embedded .bun section")
-        else:
+        if out_format == 'old':
             output_data = build_old_style(wrapper_data, payload)
             log(f"Built old-style appended binary")
+        elif detect_bun_layout(input_data) == 'grow':
+            output_data = build_new_style_grow(wrapper_data, payload)
+            log("Built new-style ELF (grow-RW, Bun 1.3.14+ layout)")
+        else:
+            output_data = build_new_style(wrapper_data, payload)
+            log("Built new-style ELF (late-PT_LOAD, Bun <=1.3.13 layout)")
     except ElfError as e:
         error(f"Failed to build output: {e}")
         sys.exit(1)
