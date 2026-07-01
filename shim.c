@@ -164,7 +164,7 @@ static int find_exe_base(struct dl_phdr_info *info, size_t size, void *data) {
  * so its BUN_COMPILED.size is 0. The wrapper's vaddr belongs to the wrapper's
  * mappings, not buno's. We mmap the .bun section from the wrapper and patch
  * buno's BUN_COMPILED.size to point to the mapped section.
- * Format: [u64 len][payload bytes] (src/StandaloneModuleGraph.zig, ELF.getData).
+ * Format: [u64 len][payload bytes] (ELF.getData in StandaloneModuleGraph).
  */
 static void patch_bun_compiled(void) {
     const char *s = getenv("BUN_TERMUX_COMPILED");
