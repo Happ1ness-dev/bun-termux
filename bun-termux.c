@@ -568,10 +568,9 @@ have_shim:
     ADD_INJECTION(target_env);
 
     /* Bun 1.3.12+ (commit 66f7c41412) switched Linux --compile to an ELF
-     * section approach: elf.zig appends the module graph, converts
-     * PT_GNU_STACK to PT_LOAD, and stores the payload vaddr in
-     * BUN_COMPILED.size. At runtime, StandaloneModuleGraph dereferences
-     * that vaddr directly.
+     * section approach: writeBunSection exposes the module graph via a
+     * PT_LOAD and stores the payload vaddr in BUN_COMPILED.size. At runtime,
+     * StandaloneModuleGraph dereferences that vaddr directly.
      *
      * The wrapper runs as "bun", so --compile targets it, not buno.
      * Buno's BUN_COMPILED.size stays 0, the wrapper's vaddr is only
@@ -582,10 +581,10 @@ have_shim:
      * and total size, and let the shim mmap the .bun section from
      * /proc/self/exe and patch buno's BUN_COMPILED.size.
      *
-     * Sources:
-     *   src/elf.zig (writeBunSection)
-     *   src/StandaloneModuleGraph.zig (ELF.getData)
-     *   src/bun.js/bindings/c-bindings.cpp (BUN_COMPILED symbol)
+     * Sources (paths moved in 1.3.14):
+     *   src/elf.zig -> src/exe_format/elf.zig (writeBunSection)
+     *   src/StandaloneModuleGraph.zig -> src/standalone_graph/StandaloneModuleGraph.zig (ELF.getData)
+     *   src/bun.js/bindings/c-bindings.cpp -> src/jsc/bindings/c-bindings.cpp (BUN_COMPILED symbol)
      */
     static char compile_env[128];
     if (BUN_COMPILED.size != 0) {
