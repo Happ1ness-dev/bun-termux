@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <link.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include <stdlib.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <ucontext.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/mman.h>
@@ -51,6 +53,10 @@ static FILE *(*real_fopen64)(const char *, const char *) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
 static int (*real_mkdir)(const char *, mode_t) = NULL;
 static int (*real_symlink)(const char *, const char *) = NULL;
+static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *) = NULL;
+
+/* Our SIGSYS handler (for seccomp-trapped syscalls like pidfd_open). */
+static void handle_sigsys(int sig, siginfo_t *si, void *ucp);
 
 static inline const char *getenv_nonempty(const char *name) {
     const char *val = getenv(name);
@@ -101,6 +107,34 @@ static const char *translate_etc(const char *path, char *buf, size_t bufsize) {
 
 static void patch_bun_compiled(void);
 
+#ifndef SYS_pidfd_open
+#define SYS_pidfd_open 434
+#endif
+
+/* Android's app-sandbox seccomp policy TRAPs syscalls missing from the
+ * whitelist (e.g. pidfd_open on older kernels). The SIGSYS handler reports
+ * them as ENOSYS so well-behaved callers like Bun fall back to older
+ * syscalls (waitpid) instead of dying. On aarch64 the seccomp trap frame
+ * already has PC past the svc instruction, so only x0 needs to be set.
+ */
+static void handle_sigsys(int sig, siginfo_t *si, void *ucp) {
+    ucontext_t *uc = (ucontext_t *)ucp;
+
+    (void)sig;
+    if (si->si_code != SYS_SECCOMP) {
+        signal(SIGSYS, SIG_DFL);
+        raise(SIGSYS);
+        return;
+    }
+
+    switch (si->si_syscall) {
+    case SYS_pidfd_open:
+    default:
+        uc->uc_mcontext.regs[0] = -ENOSYS;
+        break;
+    }
+}
+
 __attribute__((constructor))
 static void init_shim(void) {
     const char *orig;
@@ -112,13 +146,27 @@ static void init_shim(void) {
     real_execve = dlsym(RTLD_NEXT, "execve");
     real_mkdir = dlsym(RTLD_NEXT, "mkdir");
     real_symlink = dlsym(RTLD_NEXT, "symlink");
+    real_sigaction = dlsym(RTLD_NEXT, "sigaction");
 
     if (!real_openat || !real_openat64 || !real_fopen || !real_fopen64 ||
-        !real_execve || !real_mkdir || !real_symlink) {
+        !real_execve || !real_mkdir || !real_symlink || !real_sigaction) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
         syscall(SYS_write, STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
     }
+
+    /* Install our SIGSYS handler before anything else, and make sure
+     * nothing (e.g. Bun's own crash reporter) can override it: Android's
+     * seccomp TRAPs unsupported syscalls as SIGSYS, and Bun installs its
+     * own SIGSYS handler (SA_RESETHAND) that turns the trap into an abort
+     * instead of letting callers fall back to older syscalls.
+     */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = handle_sigsys;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    real_sigaction(SIGSYS, &sa, NULL);
 
     PREFIX = getenv_nonempty("PREFIX");
     if (!PREFIX) PREFIX = PREFIX_DEFAULT;
@@ -149,6 +197,24 @@ static void init_shim(void) {
     }
 
     patch_bun_compiled();
+}
+
+/* Bun installs its own SIGSYS crash handler (SA_RESETHAND) at startup,
+ * replacing the one we install in init_shim. Android's seccomp policy
+ * TRAPs pidfd_open as SIGSYS; Bun's handler turns that into an abort.
+ * We interpose sigaction so any SIGSYS handler override is rejected and
+ * ours stays installed. */
+int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
+    if (signum == SIGSYS) {
+        if (oldact) {
+            struct sigaction cur;
+            real_sigaction(SIGSYS, NULL, &cur);
+            *oldact = cur;
+        }
+        /* Keep our handler regardless of what the caller asks for. */
+        return 0;
+    }
+    return real_sigaction(signum, act, oldact);
 }
 
 static int find_exe_base(struct dl_phdr_info *info, size_t size, void *data) {
