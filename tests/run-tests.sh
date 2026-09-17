@@ -59,6 +59,18 @@ test_native_modules() {
     BUN_INSTALL="$TEST_DIR" "$TEST_DIR/bin/bun" "$SCRIPT_DIR/native-modules/test.js"
 }
 
+test_sigaction_interposition() {
+    BUN_INSTALL="$TEST_DIR" timeout 10 "$TEST_DIR/bin/bun" "$SCRIPT_DIR/native-modules/test-sigaction-interposition.js"
+}
+
+test_sigsys_oneshot() {
+    # Death test: emulation ends in the default disposition, 128 + SIGSYS.
+    local rc=0 out
+    out=$(BUN_INSTALL="$TEST_DIR" timeout 10 "$TEST_DIR/bin/bun" \
+        "$SCRIPT_DIR/native-modules/test-sigsys-oneshot.js") || rc=$?
+    [ "$rc" -eq 159 ] && [ "$out" = fired ]
+}
+
 test_pidfd_open_trap() {
     BUN_INSTALL="$TEST_DIR" timeout 10 "$SCRIPT_DIR/trap-launcher" \
         "$TEST_DIR/bin/bun" "$SCRIPT_DIR/test-pidfd-open-trap.js"
@@ -86,6 +98,8 @@ run_test "Shebang redirection" test_node_shebang
 run_test "DNS lookup" test_dns_lookup
 run_test "Nested BUN_FAKE_ROOT inheritance" test_nested_fake_root
 run_test "Native modules (.so and .node)" test_native_modules
+run_test "Sigaction interposition of SIGSYS" test_sigaction_interposition
+run_test "One-shot SA_RESETHAND emulation" test_sigsys_oneshot
 run_test "Seccomp-trapped pidfd_open falls back to ENOSYS" test_pidfd_open_trap
 run_test "Native modules compiled binary" test_native_modules_compiled
 

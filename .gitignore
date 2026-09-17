@@ -10,6 +10,7 @@ tests/*.o
 tests/native-modules/**/*.o
 tests/native-modules/addon/simple.node
 tests/native-modules/lib/simple.so
+tests/native-modules/lib/sigsys-probe.so
 
 # Test environment directory
 tests/tmp_bun_install/

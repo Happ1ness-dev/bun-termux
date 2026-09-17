@@ -149,7 +149,14 @@ $(NATIVE_DIR)/addon/simple.node: $(NATIVE_DIR)/addon/simple.c
 		-o $@ $(NATIVE_DIR)/addon/simple.o -L$(GLIBC_LIB) -l:libc.so.6
 	@rm -f $(NATIVE_DIR)/addon/simple.o
 
-test-native-modules: $(NATIVE_DIR)/lib/simple.so $(NATIVE_DIR)/addon/simple.node
+$(NATIVE_DIR)/lib/sigsys-probe.so: $(NATIVE_DIR)/lib/sigsys-probe.c
+	@echo "Building sigsys probe..."
+	@$(SHIM_CC) -shared -fPIC -nostdlib \
+		-I$(GLIBC_INC) -L$(GLIBC_LIB) \
+		-Wl,-rpath,$(GLIBC_LIB) -Wl,-rpath-link,$(GLIBC_LIB) \
+		-o $@ $< -l:libc.so.6
+
+test-native-modules: $(NATIVE_DIR)/lib/simple.so $(NATIVE_DIR)/lib/sigsys-probe.so $(NATIVE_DIR)/addon/simple.node
 	@echo "Native modules built successfully"
 
 tests: test-setup
@@ -163,6 +170,7 @@ clean:
 	rm -f $(TEST_DIR)/trap-launcher
 	rm -f $(TEST_DIR)/*.o
 	rm -f $(NATIVE_DIR)/lib/simple.so
+	rm -f $(NATIVE_DIR)/lib/sigsys-probe.so
 	rm -f $(NATIVE_DIR)/addon/simple.node
 	rm -f $(NATIVE_DIR)/addon/*.o
 	rm -rf $(TEST_TMP_DIR)
