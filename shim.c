@@ -15,6 +15,8 @@
 #include <time.h>
 #include <sys/mman.h>
 #include <errno.h>
+#include <signal.h>
+#include <sys/ucontext.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -22,6 +24,14 @@
 
 #define PREFIX_DEFAULT "/data/data/com.termux/files/usr"
 #define SHEBANG_MAX 256
+
+#if defined(__aarch64__)
+#define SYSCALL_RET(uc) (((ucontext_t *)(uc))->uc_mcontext.regs[0])
+#elif defined(__x86_64__)
+#define SYSCALL_RET(uc) (((ucontext_t *)(uc))->uc_mcontext.gregs[REG_RAX])
+#else
+#error "unsupported architecture (add a ucontext accessor)"
+#endif
 
 static const char *SAFE_DIR = NULL;
 static int safe_dir_fd = -1;
@@ -51,6 +61,10 @@ static FILE *(*real_fopen64)(const char *, const char *) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
 static int (*real_mkdir)(const char *, mode_t) = NULL;
 static int (*real_symlink)(const char *, const char *) = NULL;
+static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *) = NULL;
+static sighandler_t (*real_signal)(int, sighandler_t) = NULL;
+static pid_t shim_pid = 0;
+static struct sigaction saved_sigsys_action;
 
 static inline const char *getenv_nonempty(const char *name) {
     const char *val = getenv(name);
@@ -100,6 +114,7 @@ static const char *translate_etc(const char *path, char *buf, size_t bufsize) {
 }
 
 static void patch_bun_compiled(void);
+static struct sigaction make_sigsys_action(int flags);
 
 __attribute__((constructor))
 static void init_shim(void) {
@@ -112,13 +127,21 @@ static void init_shim(void) {
     real_execve = dlsym(RTLD_NEXT, "execve");
     real_mkdir = dlsym(RTLD_NEXT, "mkdir");
     real_symlink = dlsym(RTLD_NEXT, "symlink");
+    real_sigaction = dlsym(RTLD_NEXT, "sigaction");
+    real_signal = dlsym(RTLD_NEXT, "signal");
 
     if (!real_openat || !real_openat64 || !real_fopen || !real_fopen64 ||
-        !real_execve || !real_mkdir || !real_symlink) {
+        !real_execve || !real_mkdir || !real_symlink || !real_sigaction ||
+        !real_signal) {
         const char msg[] = "bun-shim: failed to resolve symbols\n";
         syscall(SYS_write, STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
     }
+
+    /* Install first, just in case. */
+    shim_pid = getpid();
+    struct sigaction sa = make_sigsys_action(0);
+    real_sigaction(SIGSYS, &sa, NULL);
 
     PREFIX = getenv_nonempty("PREFIX");
     if (!PREFIX) PREFIX = PREFIX_DEFAULT;
@@ -149,6 +172,55 @@ static void init_shim(void) {
     }
 
     patch_bun_compiled();
+}
+
+/* Runs in signal context. Keep this async-signal-safe. */
+static void sigsys_handler(int signo, siginfo_t *info, void *uc) {
+    /* Older Android's app-sandbox policy traps syscalls like pidfd_open.
+     * Traps carry no filter provenance, trapped sets vary by version and
+     * vendor, and Bun installs no filters. The syscall never ran, so the
+     * forged -ENOSYS sends callers to their fallback paths.
+     *
+     * See: issue #15, approach by @HanSoBored (PR #16) */
+    if (info->si_code == SYS_SECCOMP) {
+        SYSCALL_RET(uc) = -ENOSYS;
+        return;
+    }
+
+    /* A concurrent registration can tear a struct copy but never one word.
+     * One-arg handlers ignore the extra args on both supported ABIs. */
+    struct sigaction saved;
+    saved.sa_handler = saved_sigsys_action.sa_handler;
+    saved.sa_flags = saved_sigsys_action.sa_flags;
+
+    if (saved.sa_handler == SIG_IGN)
+        return;
+
+    if (saved.sa_handler != SIG_DFL) {
+        /* The kernel resets a one-shot disposition to SIG_DFL before invoking
+         * its handler. The death path below then handles the next SIGSYS. */
+        if (saved.sa_flags & SA_RESETHAND)
+            saved_sigsys_action.sa_handler = SIG_DFL;
+        saved.sa_sigaction(signo, info, uc);
+        return;
+    }
+
+    /* Nothing claimed this signal. SIGSYS defaults to death, and returning
+     * here would swallow it. The interposed sigaction would only update the
+     * saved action, so the re-raise would land back here forever. */
+    struct sigaction dfl = {0};
+    real_sigaction(SIGSYS, &dfl, NULL);
+    syscall(SYS_kill, getpid(), SIGSYS);
+}
+
+static struct sigaction make_sigsys_action(int flags) {
+    struct sigaction sa = {0};
+    sa.sa_sigaction = sigsys_handler;
+    /* SA_SIGINFO is ours. The trap path needs the ucontext. SA_RESETHAND must
+     * not reach the kernel. It would reset our slot to SIG_DFL on first
+     * delivery, disarming trap answers. Emulated in the handler instead. */
+    sa.sa_flags = SA_SIGINFO | (flags & (SA_RESTART | SA_NODEFER | SA_ONSTACK));
+    return sa;
 }
 
 static int find_exe_base(struct dl_phdr_info *info, size_t size, void *data) {
@@ -457,4 +529,46 @@ int symlink(const char *target, const char *linkpath) {
     }
     
     return real_symlink(target, linkpath);
+}
+
+/* Bun may override our SIGSYS action (e.g. from process.on('SIGSYS', ...)).
+ * Chain instead of being replaced. Keep our handler in the kernel slot and
+ * treat the saved action as the user-visible disposition. oldact and queries
+ * report it and must never leak our handler. sa_mask is dropped. Observed
+ * registrations mask nothing or only SIGSYS, which the kernel blocks
+ * during its handler anyway. */
+int sigaction(int signo, const struct sigaction *act, struct sigaction *oldact) {
+    /* The pre-exec vfork child (CLONE_VM, own pid and signal table) must not
+     * touch the saved action. A fork child that never execs keeps native
+     * semantics. Only its queries leak our handler. */
+    if (signo != SIGSYS || getpid() != shim_pid)
+        return real_sigaction(signo, act, oldact);
+    /* act may alias oldact. Read the new action before writing oldact. */
+    struct sigaction old = saved_sigsys_action;
+    if (act) {
+        struct sigaction ours = make_sigsys_action(act->sa_flags);
+        /* A failed install must leave the disposition and oldact untouched. */
+        if (real_sigaction(SIGSYS, &ours, NULL) < 0)
+            return -1;
+        /* No lock: registrations are single-threaded in practice, and a
+         * signal landing mid-save is an accepted race. */
+        saved_sigsys_action.sa_handler = act->sa_handler;
+        saved_sigsys_action.sa_flags = act->sa_flags;
+    }
+    if (oldact)
+        *oldact = old;
+    return 0;
+}
+
+/* glibc's signal() bypasses the interposed sigaction. Without this hook,
+ * listener removal disarms trap answers. */
+sighandler_t signal(int signo, sighandler_t handler) {
+    if (signo != SIGSYS)
+        return real_signal(signo, handler);
+    struct sigaction act = {0}, old;
+    act.sa_handler = handler;
+    act.sa_flags = SA_RESTART;
+    if (sigaction(SIGSYS, &act, &old) < 0)
+        return SIG_ERR;
+    return old.sa_handler;
 }
