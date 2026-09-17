@@ -96,7 +96,7 @@ TEST_DIR = tests
 TEST_TMP_DIR = $(TEST_DIR)/tmp_bun_install
 NATIVE_DIR = $(TEST_DIR)/native-modules
 NODE_INCLUDE = /data/data/com.termux/files/usr/include/node
-test-setup: all test-proc-self-exe test-native-modules
+test-setup: all test-proc-self-exe test-trap-launcher test-native-modules
 	@echo "Setting up test environment..."
 	@if [ -z "$(TEST_TMP_DIR)" ]; then echo "Error: env var TEST_TMP_DIR is empty"; exit 1; fi
 	@if [ "$(TEST_TMP_DIR)" = "/" ]; then echo "Error: TEST_TMP_DIR is root"; exit 1; fi
@@ -115,6 +115,10 @@ test-clean:
 
 test-compile-full: test-setup
 	@bash $(TEST_DIR)/test-compile-full.sh
+
+test-trap-launcher: $(TEST_DIR)/trap-launcher.c
+	@echo "Building trap launcher..."
+	@$(WRAPPER_CC) $(CFLAGS) -o $(TEST_DIR)/trap-launcher $(TEST_DIR)/trap-launcher.c
 
 test-proc-self-exe: $(TEST_DIR)/test-proc-self-exe.c
 	@echo "Building /proc/self/exe test..."
@@ -156,6 +160,7 @@ tests: test-setup
 clean:
 	rm -f bun-shim.so bun-termux
 	rm -f $(TEST_DIR)/test-proc-self-exe
+	rm -f $(TEST_DIR)/trap-launcher
 	rm -f $(TEST_DIR)/*.o
 	rm -f $(NATIVE_DIR)/lib/simple.so
 	rm -f $(NATIVE_DIR)/addon/simple.node

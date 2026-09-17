@@ -4,6 +4,7 @@ bun-shim.so
 
 # Test binaries
 tests/test-proc-self-exe
+tests/trap-launcher
 tests/test-env-compiled
 tests/*.o
 tests/native-modules/**/*.o

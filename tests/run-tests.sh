@@ -59,6 +59,11 @@ test_native_modules() {
     BUN_INSTALL="$TEST_DIR" "$TEST_DIR/bin/bun" "$SCRIPT_DIR/native-modules/test.js"
 }
 
+test_pidfd_open_trap() {
+    BUN_INSTALL="$TEST_DIR" timeout 10 "$SCRIPT_DIR/trap-launcher" \
+        "$TEST_DIR/bin/bun" "$SCRIPT_DIR/test-pidfd-open-trap.js"
+}
+
 test_native_modules_compiled() {
     BUN_INSTALL="$TEST_DIR" "$TEST_DIR/bin/bun" build --compile \
         --outfile "$TEST_DIR/native-test" \
@@ -81,6 +86,7 @@ run_test "Shebang redirection" test_node_shebang
 run_test "DNS lookup" test_dns_lookup
 run_test "Nested BUN_FAKE_ROOT inheritance" test_nested_fake_root
 run_test "Native modules (.so and .node)" test_native_modules
+run_test "Seccomp-trapped pidfd_open falls back to ENOSYS" test_pidfd_open_trap
 run_test "Native modules compiled binary" test_native_modules_compiled
 
 echo "=== Summary ==="
