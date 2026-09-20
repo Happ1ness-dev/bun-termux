@@ -109,6 +109,7 @@ Intercepts system calls to work around Android restrictions:
 - Stubs hardlinking → makes `bun install` work
 - Redirects bun's hardcoded `/tmp/bun-node*` to `$TMPDIR` and bun symlinks to wrapper → makes `--bun` arg work
 - Redirects some dns-related `/etc` paths to `$PREFIX/etc` → makes `dns.lookup()` work
+- Catches trapped syscalls → prevents "Bad system call"/"Aborted" crashes on older Android
 
 See [docs/README.md](docs/README.md#how-it-works) for the full technical breakdown.
 
