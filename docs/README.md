@@ -88,6 +88,7 @@ Shim preloads via the dynamic linker's `--preload` option.
 - **Temp paths** - Shim intercepts bun's hardcoded `/tmp/bun-node*` in `symlink()`, `mkdir()` and `execve()` PATH and redirects them to use `$TMPDIR`. When bun creates symlinks pointing to `BUN_TERMUX_TARGET`, the shim rewrites them to point to `BUN_TERMUX_WRAPPER` instead, making `bun --bun` work.
 - **CPU stats** - Shim intercepts reads to `/proc/stat` and generates minimal CPU statistics stub, allowing `os.cpus()` to work in bun.
 - **Hardlinks** - Shim stubs `linkat()` and returns `EXDEV` (`error.NotSameFileSystem`), which forces bun to fall back to copyfile when installing packages.
+- **Seccomp traps** - Shim's SIGSYS handler forges `ENOSYS` for trapped syscalls (e.g. `pidfd_open` under Android 10's app-sandbox policy), so Bun falls back and survives. Shim intercepts `sigaction()`/`signal()` to chain registrations and keep it armed. Only user-raised SIGSYS reaches listeners, staying fatal without one.
 
 ## Environment Variables
 
