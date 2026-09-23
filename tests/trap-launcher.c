@@ -1,7 +1,8 @@
-/* Installs a seccomp RET_TRAP filter for pidfd_open, then execs the given
- * command. Emulates Android's app-sandbox policy (issue #15) so the shim's
- * forged ENOSYS can be tested without an affected device. Filters
- * survive execve, reaching Bun and its children. */
+/* Installs a seccomp RET_TRAP filter for pidfd_open and getsid, then execs
+ * the given command. Emulates Android's app-sandbox policy (issue #15) so
+ * the shim's forged ENOSYS can be tested without an affected device.
+ * getsid succeeds natively, so its ENOSYS is positive evidence the trap
+ * fired. Filters survive execve, reaching Bun and its children. */
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <stddef.h>
@@ -22,7 +23,8 @@ int main(int argc, char **argv) {
 
     struct sock_filter filter[] = {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_pidfd_open, 0, 1),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_pidfd_open, 1, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_getsid, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };

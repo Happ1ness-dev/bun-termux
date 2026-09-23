@@ -1,6 +1,8 @@
 /* Sigaction here resolves to the shim's interposed symbol,
  * the same path Bun's libc sigaction takes. */
+#include <errno.h>
 #include <signal.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static void my_handler(int s, siginfo_t *i, void *u) { (void)s; (void)i; (void)u; }
@@ -95,4 +97,10 @@ int sigsys_ign_probe(void) {
     if (sigaction(SIGSYS, NULL, &cur) < 0) return -2;
     if (cur.sa_handler != SIG_IGN) return -3;
     return 0;
+}
+
+/* ENOSYS here can only come from the shim answering the launcher's trap. */
+int trap_probe_getsid_errno(void) {
+    errno = 0;
+    return syscall(SYS_getsid, 0) < 0 ? errno : 0;
 }
