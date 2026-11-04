@@ -81,9 +81,13 @@ test_native_modules_compiled() {
         --outfile "$TEST_DIR/native-test" \
         "$SCRIPT_DIR/native-modules/test.js" \
         "$SCRIPT_DIR/native-modules/lib/simple.so" \
-        "$SCRIPT_DIR/native-modules/addon/simple.node"
+        "$SCRIPT_DIR/native-modules/addon/simple.node" || return
 
-    BUN_INSTALL="$TEST_DIR" "$TEST_DIR/native-test"
+    local rc=0 out
+    out=$(BUN_INSTALL="$TEST_DIR" "$TEST_DIR/native-test") || rc=$?
+    echo "$out"
+    # If payload detection fails, the binary runs as the Bun CLI, which exits 0.
+    [ "$rc" -eq 0 ] && grep -q '^PASS: ' <<< "$out"
 }
 
 # Main
