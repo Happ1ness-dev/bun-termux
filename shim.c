@@ -223,19 +223,27 @@ static struct sigaction make_sigsys_action(int flags) {
     return sa;
 }
 
-static int find_exe_base(struct dl_phdr_info *info, size_t size, void *data) {
+typedef struct {
+    uintptr_t base;
+    const ElfW(Phdr) *phdrs;
+    ElfW(Half) phnum;
+} exe_info_t;
+
+static int find_exe(struct dl_phdr_info *info, size_t size, void *data) {
     (void)size;
     if (info->dlpi_name[0] == '\0') {
-        *(uintptr_t *)data = info->dlpi_addr;
+        exe_info_t *out = data;
+        out->base = info->dlpi_addr;
+        out->phdrs = info->dlpi_phdr;
+        out->phnum = info->dlpi_phnum;
         return 1; /* stop iterating */
     }
     return 0;
 }
 
 /* Bun 1.3.12+ compiled binaries: buno is a separate ELF loaded by ld.so,
- * so its BUN_COMPILED.size is 0. The wrapper's vaddr belongs to the wrapper's
- * mappings, not buno's. We mmap the .bun section from the wrapper and patch
- * buno's BUN_COMPILED.size to point to the mapped section.
+ * so its BUN_COMPILED.size stays 0 while the payload lives on in the
+ * wrapper's own segment. Patch buno's BUN_COMPILED.size to that mapping.
  * Format: [u64 len][payload bytes] (ELF.getData in StandaloneModuleGraph).
  */
 static void patch_bun_compiled(void) {
@@ -245,29 +253,39 @@ static void patch_bun_compiled(void) {
 
     char *end;
     unsigned long long target = strtoull(s, &end, 16);
-    unsigned long long off = (*end == ',') ? strtoull(end + 1, &end, 16) : 0;
-    unsigned long long len = (*end == ',') ? strtoull(end + 1, &end, 16) : 0;
-    if (*end != '\0' || target == 0 || len == 0) return;
+    unsigned long long payload_addr = (*end == ',') ? strtoull(end + 1, &end, 16) : 0;
+    unsigned long long size = (*end == ',') ? strtoull(end + 1, &end, 16) : 0;
+    if (*end != '\0' || target == 0 || payload_addr == 0 || size == 0) return;
 
-    int fd = real_openat(AT_FDCWD, "/proc/self/exe", O_RDONLY, 0);
-    if (fd < 0) return;
+    exe_info_t exe = {0};
+    dl_iterate_phdr(find_exe, &exe);
+    if (!exe.phdrs || payload_addr < exe.base) return;
+
+    /* Bun 1.4.4's reader accepts the payload only inside a PT_LOAD of a
+     * dl_iterate_phdr-visible module, so claim its range through buno's
+     * PT_GNU_STACK slot, which ld.so is done with. */
+    ElfW(Phdr) *slot = NULL;
+    for (int i = 0; i < exe.phnum; i++) {
+        if (exe.phdrs[i].p_type == PT_GNU_STACK) {
+            slot = (ElfW(Phdr) *)&exe.phdrs[i];
+            break;
+        }
+    }
+    if (!slot) return;
 
     long ps = sysconf(_SC_PAGESIZE);
-    /* Bun's elf.zig page-aligns the .bun section offset, so
-     * 'off' is always page-aligned and the mmap offset is exact.
-     */
-    size_t map_len = ((size_t)len + ps - 1) & ~(size_t)(ps - 1);
-    void *mapped = mmap(NULL, map_len, PROT_READ, MAP_PRIVATE, fd, (off_t)off);
-    if (mapped != MAP_FAILED) {
-        /* BUN_COMPILED is a mutable global in buno's data segment,
-         * so the target page is already writable.
-         * buno is currently ET_EXEC (base == 0), but add the load base
-         * anyway so this keeps working if Bun ever switches to PIE. */
-        uintptr_t base = 0;
-        dl_iterate_phdr(find_exe_base, &base);
-        *(volatile uint64_t *)(base + target) = (uint64_t)mapped;
-    }
-    close(fd);
+    void *page = (void *)((uintptr_t)slot & ~(uintptr_t)(ps - 1));
+    if (mprotect(page, ps, PROT_READ | PROT_WRITE) < 0) return;
+    slot->p_type = PT_LOAD;
+    slot->p_vaddr = payload_addr - exe.base;
+    slot->p_memsz = size;
+    mprotect(page, ps, PROT_READ); /* buno's phdrs sit in its read-only first LOAD */
+
+    /* BUN_COMPILED is a mutable global in buno's data segment,
+     * so the target page is already writable.
+     * buno is currently ET_EXEC (base == 0), but add the load base
+     * anyway so this keeps working if Bun ever switches to PIE. */
+    *(volatile uint64_t *)(exe.base + target) = payload_addr;
 }
 
 static int generate_proc_stat(char *buf, size_t size) {

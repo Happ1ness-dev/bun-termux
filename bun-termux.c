@@ -323,17 +323,13 @@ out:
     return ret;
 }
 
-/* Find the .bun section offset and total size in the wrapper's own ELF.
- * Bun's writeBunSection sets sh_size = header_size + payload, so sh_size
- * is the total bytes the shim needs to mmap.
- * Returns 0 on success, -1 on failure.
- */
-static int find_bun_payload_info(const char *path, uint64_t *file_offset, uint64_t *total_size) {
-    bun_section_t s;
-    if (find_bun_section(path, &s) < 0) return -1;
-    if (s.sh_size < sizeof(BunCompiledHeader)) return -1;
-    *file_offset = s.sh_offset;
-    *total_size = s.sh_size;
+static uintptr_t own_load_base(void) {
+    const Elf64_Phdr *ph = (const Elf64_Phdr *)getauxval(AT_PHDR);
+    long phnum = getauxval(AT_PHNUM);
+    for (long i = 0; i < phnum; i++) {
+        if (ph[i].p_type == PT_PHDR)
+            return (uintptr_t)ph - ph[i].p_vaddr;
+    }
     return 0;
 }
 
@@ -573,13 +569,11 @@ have_shim:
      * StandaloneModuleGraph dereferences that vaddr directly.
      *
      * The wrapper runs as "bun", so --compile targets it, not buno.
-     * Buno's BUN_COMPILED.size stays 0, the wrapper's vaddr is only
-     * valid in the wrapper's address space.
-     *
-     * So we broker access: parse buno's ELF for its BUN_COMPILED runtime
-     * address, parse the wrapper's ELF for the .bun section file offset
-     * and total size, and let the shim mmap the .bun section from
-     * /proc/self/exe and patch buno's BUN_COMPILED.size.
+     * Buno's BUN_COMPILED.size stays 0, and the payload vaddr is relative
+     * to the wrapper's load base, which buno cannot see. We pass buno's
+     * BUN_COMPILED runtime address (parsed from its ELF) plus the
+     * payload's runtime address and size to the shim, which patches
+     * BUN_COMPILED.size.
      *
      * Sources (paths moved in 1.3.14):
      *   src/elf.zig -> src/exe_format/elf.zig (writeBunSection)
@@ -588,17 +582,20 @@ have_shim:
      */
     static char compile_env[128];
     if (BUN_COMPILED.size != 0) {
-        if (self_len <= 0) die("cannot read /proc/self/exe for compiled binary");
         /* sh_addr == &BUN_COMPILED (the only symbol in .bun) */
         bun_section_t bun_sec;
         uint64_t target_vaddr = find_bun_section(bun_path, &bun_sec) == 0 ? bun_sec.sh_addr : 0;
-        uint64_t payload_offset, total_size;
-        if (target_vaddr != 0 &&
-            find_bun_payload_info(self_path, &payload_offset, &total_size) == 0) {
+        uintptr_t base = own_load_base();
+        if (target_vaddr != 0 && base != 0) {
+            /* The writer stores the payload vaddr in BUN_COMPILED.size, and
+             * the payload is already mapped with our RW segment. */
+            uintptr_t payload_addr = base + BUN_COMPILED.size;
+            const BunCompiledHeader *hdr = (const BunCompiledHeader *)payload_addr;
+            uint64_t total_size = hdr->size + sizeof(*hdr);
             snprintf(compile_env, sizeof(compile_env),
                      "BUN_TERMUX_COMPILED=%llx,%llx,%llx",
                      (unsigned long long)target_vaddr,
-                     (unsigned long long)payload_offset,
+                     (unsigned long long)payload_addr,
                      (unsigned long long)total_size);
             ADD_INJECTION(compile_env);
         }
