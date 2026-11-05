@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -532,21 +533,50 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
 
 int mkdir(const char *pathname, mode_t mode) {
     char buf[PATH_MAX];
+    int is_bun_node = strncmp(pathname, "/tmp/bun-node-", 14) == 0;
     pathname = translate_tmp(pathname, buf, sizeof(buf));
-    return real_mkdir(pathname, mode);
+    if (real_mkdir(pathname, mode) == 0)
+        return 0;
+    if (errno != EEXIST || !is_bun_node)
+        return -1;
+    /* Bun 1.4.0+ checks this dir with lstat() on the untranslated /tmp path
+     * via inline svc and gives up on ENOENT, so verify the translated path.
+     * See: bun-bun-v1.4.4/src/install/lib.rs (create_fake_temporary_node_executable) */
+    struct stat st;
+    if (lstat(pathname, &st) == 0 && S_ISDIR(st.st_mode) &&
+        st.st_uid == getuid() && !(st.st_mode & 022))
+        return 0;
+    errno = EEXIST;
+    return -1;
 }
 
 int symlink(const char *target, const char *linkpath) {
     char tbuf[PATH_MAX], lbuf[PATH_MAX];
-    
+    int is_bun_node = strncmp(linkpath, "/tmp/bun-node-", 14) == 0;
+
     target = translate_tmp(target, tbuf, sizeof(tbuf));
     linkpath = translate_tmp(linkpath, lbuf, sizeof(lbuf));
     
     if (TARGET_PATH && WRAPPER_PATH && strcmp(target, TARGET_PATH) == 0) {
         target = WRAPPER_PATH;
     }
-    
-    return real_symlink(target, linkpath);
+
+    if (real_symlink(target, linkpath) == 0)
+        return 0;
+    if (errno != EEXIST || !is_bun_node)
+        return -1;
+    /* Same untranslated-path blind spot as in mkdir. */
+    char existing[PATH_MAX];
+    ssize_t n = readlink(linkpath, existing, sizeof(existing) - 1);
+    if (n >= 0) {
+        existing[n] = '\0';
+        if (strcmp(existing, target) == 0)
+            return 0;
+        if (unlink(linkpath) == 0 && real_symlink(target, linkpath) == 0)
+            return 0;
+    }
+    errno = EEXIST;
+    return -1;
 }
 
 /* Bun may override our SIGSYS action (e.g. from process.on('SIGSYS', ...)).
