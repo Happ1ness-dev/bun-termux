@@ -69,7 +69,7 @@ Also see [other_projects/README.md](other_projects/README.md) for guides and exa
 - Wrapper backs up original `LD_PRELOAD` and `LD_LIBRARY_PATH` to `BUN_TERMUX_ORIG_LD_PRELOAD` and `BUN_TERMUX_ORIG_LD_LIBRARY_PATH`.
 - `--library-path` is passed to the dynamic linker to make sure glibc libraries are found.
 - **Compiled binaries**
-  - **Bun 1.3.12+** - The wrapper carries the payload in its `.bun` section. Since the original bun was never modified, its `BUN_COMPILED.size` is zero. The wrapper parses both ELFs to find the original bun's `BUN_COMPILED` address and its own `.bun` offset and size, then passes them to the shim via `BUN_TERMUX_COMPILED`.
+  - **Bun 1.3.12+** - The wrapper carries the payload in its `.bun` section. Since the original bun was never modified, its `BUN_COMPILED.size` is zero. The wrapper parses the original bun's ELF for its `BUN_COMPILED` address and passes it with the payload's address and size to the shim via `BUN_TERMUX_COMPILED`.
   - **Pre-1.3.12** - The payload is appended after the ELF. The Bun runtime reads it directly from the file, so no runtime brokering is needed.
 
 ### 2. Userland exec
@@ -79,7 +79,7 @@ Wrapper uses userland exec to replace itself with glibc's dynamic linker (`ld-li
 Shim preloads via the dynamic linker's `--preload` option.
 
 - Shim restores original `LD_PRELOAD` and `LD_LIBRARY_PATH` from `BUN_TERMUX_ORIG_*` env vars, ensuring that child processes inherit them.
-- If `BUN_TERMUX_COMPILED` is present, the shim memory-maps the wrapper's `.bun` section from `/proc/self/exe` and patches the original bun's `BUN_COMPILED.size` to point to the mapped payload. This lets compiled binaries find their payload.
+- If `BUN_TERMUX_COMPILED` is present, the shim claims the payload's range as a `PT_LOAD` of the original bun and patches its `BUN_COMPILED.size` to point at the already-mapped payload. This lets compiled binaries find their payload.
 
 ### 4. Runtime interception
 - **Directory access** - Shim intercepts `openat()` and `openat64()`. When an `O_DIRECTORY` open of a CWD ancestor (e.g. `/`, `/data`, `/storage`) fails with `EACCES`, the shim returns a fd to a safe directory instead (`BUN_FAKE_ROOT` if set, else `TMPDIR`, or `/data/data/com.termux/files/usr/tmp`). Other opens pass through unchanged.
