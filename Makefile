@@ -20,7 +20,9 @@ endif
 
 # Compiler configuration
 # Wrapper: native Android binary (runs in Termux environment)
-WRAPPER_CC = clang --target=$(TARGET_ARCH)-linux-android
+# ndk-sysroot 30 rejects unversioned target triples. 24 is Termux's minimum API level.
+ANDROID_API ?= 24
+WRAPPER_CC = clang --target=$(TARGET_ARCH)-linux-android$(ANDROID_API)
 
 # Shim and tests: glibc Linux binaries (run under glibc loader, not Android libc)
 SHIM_CC = clang --target=$(TARGET_ARCH)-linux-gnu
