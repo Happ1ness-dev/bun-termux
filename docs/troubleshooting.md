@@ -38,3 +38,8 @@ Or you could just update to the latest version of bun-termux:
 git pull
 make clean install
 ```
+
+## Compiled binary broke after updating Bun or Bun-Termux
+
+This happens because compiled binaries aren't self-contained. They embed the wrapper and payload, but run against the current `buno` and `bun-shim.so`, which may no longer match after an update (e.g. Bun-Termux updates can change the protocol between the wrapper and the shim).
+Rebuild your binaries after any Bun or Bun-Termux update. If you know what you're doing, you can just replace the embedded wrapper with `replace_runtime.py`.
