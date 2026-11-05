@@ -90,6 +90,19 @@ test_native_modules_compiled() {
     [ "$rc" -eq 0 ] && grep -q '^PASS: ' <<< "$out"
 }
 
+test_bun_flag_repeated() {
+    local proj="$TEST_DIR/tmp/bun-flag"
+    mkdir -p "$proj"
+    printf 'console.log(process.isBun ? "bun" : "node")\n' > "$proj/check.js"
+    printf '{"scripts":{"check":"node check.js"}}\n' > "$proj/package.json"
+    local i out
+    for i in 1 2 3; do
+        out=$(cd "$proj" && TMPDIR="$TEST_DIR/tmp" BUN_INSTALL="$TEST_DIR" \
+            "$TEST_DIR/bin/bun" --bun run check 2>&1)
+        grep -q '^bun$' <<< "$out" || { echo "run $i did not execute as bun"; return 1; }
+    done
+}
+
 # Main
 setup_test_env
 
@@ -106,6 +119,7 @@ run_test "Sigaction interposition of SIGSYS" test_sigaction_interposition
 run_test "One-shot SA_RESETHAND emulation" test_sigsys_oneshot
 run_test "Seccomp-trapped pidfd_open falls back to ENOSYS" test_pidfd_open_trap
 run_test "Native modules compiled binary" test_native_modules_compiled
+run_test "bun --bun works on repeated runs" test_bun_flag_repeated
 
 echo "=== Summary ==="
 echo -e "${GREEN}All $TESTS_PASSED tests passed!${NC}"
