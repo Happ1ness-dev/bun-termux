@@ -105,6 +105,10 @@ static size_t filter_envp(char **src, const char **dst, size_t max) {
             continue;
         if (strncmp(*e, "BUN_TERMUX_COMPILED=", sizeof("BUN_TERMUX_COMPILED=") - 1) == 0)
             continue;
+        if (strncmp(*e, "BUN_TERMUX_WRAPPER=", sizeof("BUN_TERMUX_WRAPPER=") - 1) == 0)
+            continue;
+        if (strncmp(*e, "BUN_TERMUX_TARGET=", sizeof("BUN_TERMUX_TARGET=") - 1) == 0)
+            continue;
 
         if (strncmp(*e, "LD_PRELOAD=", 11) == 0) {
             int len = snprintf(orig_preload, sizeof(orig_preload),
